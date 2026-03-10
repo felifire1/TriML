@@ -12,6 +12,7 @@ into proper numeric columns here so downstream code never has to deal with them.
 
 import ast
 import re
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,53 @@ import pandas as pd
 # Default path: CSVs live in the project root
 _ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = _ROOT  # athletes.csv / daily_data.csv / activity_data.csv are in root
+
+# Public Zenodo download URLs (record 15401061)
+_ZENODO_URLS = {
+    "athletes.csv": "https://zenodo.org/api/records/15401061/files/athletes.csv/content",
+    "daily_data.csv": "https://zenodo.org/api/records/15401061/files/daily_data.csv/content",
+    "activity_data.csv": "https://zenodo.org/api/records/15401061/files/activity_data.csv/content",
+}
+
+_FILE_SIZES = {
+    "athletes.csv": 465_161,
+    "daily_data.csv": 71_186_033,
+    "activity_data.csv": 115_428_530,
+}
+
+
+def ensure_data(data_dir: Path | None = None, progress_callback=None) -> Path:
+    """
+    Make sure all three CSV files exist in data_dir (defaults to project root).
+    If any are missing, download them from Zenodo.
+
+    Args:
+        data_dir: Directory to store/find CSVs. Defaults to project root.
+        progress_callback: Optional callable(filename, bytes_downloaded, total_bytes)
+                           for progress reporting (used by Streamlit spinner).
+
+    Returns:
+        The resolved data_dir Path.
+    """
+    data_dir = Path(data_dir) if data_dir else DATA_DIR
+
+    for filename, url in _ZENODO_URLS.items():
+        dest = data_dir / filename
+        if dest.exists() and dest.stat().st_size > _FILE_SIZES[filename] * 0.9:
+            continue  # already present and looks complete
+
+        total = _FILE_SIZES[filename]
+        downloaded = 0
+
+        def _hook(block_num, block_size, file_size):
+            nonlocal downloaded
+            downloaded = min(block_num * block_size, total)
+            if progress_callback:
+                progress_callback(filename, downloaded, total)
+
+        urllib.request.urlretrieve(url, dest, reporthook=_hook)
+
+    return data_dir
 
 
 # ---------------------------------------------------------------------------

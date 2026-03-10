@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.loader import (
     aggregate_activities,
     build_merged,
+    ensure_data,
     find_demo_athlete,
     load_activities,
     load_athletes,
@@ -50,6 +51,25 @@ INJURY_COLOR = "rgba(220,50,50,0.45)"
 # ---------------------------------------------------------------------------
 # Data loading (cached so it only runs once per session)
 # ---------------------------------------------------------------------------
+
+@st.cache_resource(show_spinner=False)
+def _get_data_dir():
+    """Download CSVs from Zenodo if not present. Cached for the server lifetime."""
+    status = st.empty()
+    bar = st.empty()
+
+    def _progress(filename, done, total):
+        pct = done / total
+        mb_done = done / 1_048_576
+        mb_total = total / 1_048_576
+        status.caption(f"⬇️  Downloading **{filename}** — {mb_done:.0f} / {mb_total:.0f} MB")
+        bar.progress(pct)
+
+    data_dir = ensure_data(progress_callback=_progress)
+    status.empty()
+    bar.empty()
+    return data_dir
+
 
 @st.cache_data(show_spinner=False)
 def load_all_data():
@@ -106,7 +126,10 @@ def main():
         "1,000 synthetic triathletes · 366 days · health signals, training load, and activities."
     )
 
-    # Load data
+    # Ensure CSVs exist (downloads from Zenodo on Streamlit Cloud if missing)
+    _get_data_dir()
+
+    # Load + parse data
     with st.spinner("Loading dataset — this takes ~30 s on first run…"):
         merged, act, ath, demo_id = load_all_data()
 
