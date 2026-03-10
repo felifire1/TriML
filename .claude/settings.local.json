@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /Users/felipequiroz/Desktop/CS_6140/TriML/*.csv)",
+      "Bash(pdftotext Instructions.pdf -)",
+      "Bash(python3:*)",
+      "Bash(git init)",
+      "Bash(git add src/ app/ requirements.txt README.md .gitignore)",
+      "Bash(git commit:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(gh --version)",
+      "Bash(git add src/loader.py app/streamlit_app.py)"
+    ]
+  }
+}
