@@ -240,6 +240,13 @@ def build_merged(
     df["dominant_sport"] = df["dominant_sport"].fillna("rest")
     df["sports_of_day"] = df["sports_of_day"].fillna("")
 
+    # Rename athlete columns that collide with daily_data columns before merging
+    # (athletes has baseline values; daily has actual daily measurements)
+    df_athletes = df_athletes.rename(columns={
+        "resting_hr": "baseline_rhr",
+        "sleep_quality": "baseline_sleep_quality",
+    })
+
     # Merge static athlete profile
     df = df.merge(df_athletes, on="athlete_id", how="left")
 

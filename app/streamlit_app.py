@@ -82,7 +82,7 @@ def _athlete_profile(ath_row):
     col_d.metric("FTP (W)", f"{ath_row['ftp']:.0f}")
     col_e, col_f = st.columns(2)
     col_e.metric("HRV Baseline", f"{ath_row['hrv_baseline']:.1f}")
-    col_f.metric("Resting HR", f"{ath_row['resting_hr']:.0f} bpm")
+    col_f.metric("Baseline RHR", f"{ath_row['resting_hr']:.0f} bpm")
     col_g, col_h = st.columns(2)
     col_g.metric("Training Exp.", f"{ath_row['training_experience']:.1f} yrs")
     col_h.metric("Wkly Hours", f"{ath_row['weekly_training_hours']:.1f}")
@@ -203,7 +203,7 @@ def main():
     fig1.add_trace(
         go.Scatter(
             x=df["date"],
-            y=df["resting_hr"],
+            y=df["resting_hr"],  # daily measured RHR from daily_data
             name="Resting HR",
             line=dict(color="#EF5350", width=2),
             hovertemplate="<b>RHR</b>: %{y:.1f} bpm<extra></extra>",
