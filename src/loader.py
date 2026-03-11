@@ -38,18 +38,37 @@ _FILE_SIZES = {
 
 def ensure_data(data_dir: Path | None = None, progress_callback=None) -> Path:
     """
-    Make sure all three CSV files exist in data_dir (defaults to project root).
-    If any are missing, download them from Zenodo.
+    Make sure all three CSV files exist in data_dir.
+
+    Resolution order:
+      1. Caller-supplied data_dir
+      2. Project root (works locally where CSVs sit next to the code)
+      3. /tmp/triml_data  (fallback for read-only cloud filesystems)
+
+    If any CSV is missing, it is downloaded from Zenodo.
 
     Args:
-        data_dir: Directory to store/find CSVs. Defaults to project root.
-        progress_callback: Optional callable(filename, bytes_downloaded, total_bytes)
-                           for progress reporting (used by Streamlit spinner).
+        data_dir: Directory to store/find CSVs.
+        progress_callback: Optional callable(filename, bytes_downloaded, total_bytes).
 
     Returns:
-        The resolved data_dir Path.
+        The resolved data_dir Path where all CSVs are guaranteed to exist.
     """
-    data_dir = Path(data_dir) if data_dir else DATA_DIR
+    # Determine a writable directory
+    if data_dir:
+        data_dir = Path(data_dir)
+    else:
+        # Try project root first (local dev); fall back to /tmp on cloud
+        candidate = DATA_DIR
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            test_file = candidate / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            data_dir = candidate
+        except (OSError, PermissionError):
+            data_dir = Path("/tmp/triml_data")
+            data_dir.mkdir(parents=True, exist_ok=True)
 
     for filename, url in _ZENODO_URLS.items():
         dest = data_dir / filename
@@ -57,13 +76,11 @@ def ensure_data(data_dir: Path | None = None, progress_callback=None) -> Path:
             continue  # already present and looks complete
 
         total = _FILE_SIZES[filename]
-        downloaded = 0
 
-        def _hook(block_num, block_size, file_size):
-            nonlocal downloaded
-            downloaded = min(block_num * block_size, total)
+        def _hook(block_num, block_size, file_size, _fn=filename, _total=total):
             if progress_callback:
-                progress_callback(filename, downloaded, total)
+                done = min(block_num * block_size, _total)
+                progress_callback(_fn, done, _total)
 
         urllib.request.urlretrieve(url, dest, reporthook=_hook)
 
