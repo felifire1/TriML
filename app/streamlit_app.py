@@ -53,29 +53,29 @@ INJURY_COLOR = "rgba(220,50,50,0.45)"
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner=False)
-def _get_data_dir():
-    """Download CSVs from Zenodo if not present. Cached for the server lifetime."""
-    status = st.empty()
-    bar = st.empty()
-
+def _get_data_dir() -> str:
+    """
+    Ensure CSVs exist (downloads from Zenodo if missing).
+    Returns data_dir as a string so it is safely hashable by st.cache_data.
+    Cached for the server lifetime so downloads only happen once per deploy.
+    """
+    # Progress is printed to server logs on Cloud (no st widgets inside cache_resource)
     def _progress(filename, done, total):
-        pct = done / total
-        mb_done = done / 1_048_576
-        mb_total = total / 1_048_576
-        status.caption(f"⬇️  Downloading **{filename}** — {mb_done:.0f} / {mb_total:.0f} MB")
-        bar.progress(pct)
+        pct = done / total * 100
+        print(f"  {filename}: {pct:.0f}%", flush=True)
 
     data_dir = ensure_data(progress_callback=_progress)
-    status.empty()
-    bar.empty()
-    return data_dir
+    return str(data_dir)
 
 
 @st.cache_data(show_spinner=False)
-def load_all_data():
-    ath = load_athletes()
-    daily = load_daily()
-    act = load_activities()
+def load_all_data(data_dir: str):
+    """Load and parse all CSVs. data_dir must be passed so cache key is correct."""
+    from pathlib import Path
+    p = Path(data_dir)
+    ath = load_athletes(p / "athletes.csv")
+    daily = load_daily(p / "daily_data.csv")
+    act = load_activities(p / "activity_data.csv")
     act_agg = aggregate_activities(act)
     merged = build_merged(daily, act_agg, ath)
     demo_id = find_demo_athlete(merged, act)
@@ -126,12 +126,13 @@ def main():
         "1,000 synthetic triathletes · 366 days · health signals, training load, and activities."
     )
 
-    # Ensure CSVs exist (downloads from Zenodo on Streamlit Cloud if missing)
-    _get_data_dir()
+    # Ensure CSVs exist — downloads from Zenodo on first run (Cloud or local)
+    with st.spinner("Checking data files…"):
+        data_dir = _get_data_dir()
 
     # Load + parse data
     with st.spinner("Loading dataset — this takes ~30 s on first run…"):
-        merged, act, ath, demo_id = load_all_data()
+        merged, act, ath, demo_id = load_all_data(data_dir)
 
     athlete_ids = sorted(merged["athlete_id"].unique())
     default_idx = athlete_ids.index(demo_id) if demo_id in athlete_ids else 0
