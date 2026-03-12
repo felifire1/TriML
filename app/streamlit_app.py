@@ -98,7 +98,7 @@ def _athlete_profile(ath_row):
     col_a.metric("Age", int(ath_row["age"]))
     col_b.metric("Gender", ath_row["gender"].title())
     col_c, col_d = st.columns(2)
-    col_c.metric("VO₂max", f"{ath_row['vo2max']:.1f}")
+    col_c.metric("VO2max", f"{ath_row['vo2max']:.1f}")
     col_d.metric("FTP (W)", f"{ath_row['ftp']:.0f}")
     col_e, col_f = st.columns(2)
     col_e.metric("HRV Baseline", f"{ath_row['hrv_baseline']:.1f}")
@@ -189,7 +189,7 @@ def main():
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Days shown", n_days)
-    c2.metric("Injury days", n_injury, delta=f"{100*n_injury/n_days:.1f}%", delta_color="inverse")
+    c2.metric("Injury days", f"{n_injury} ({100*n_injury/n_days:.1f}%)")
     c3.metric("Total TSS", f"{total_tss:,.0f}")
     c4.metric("Avg HRV", f"{avg_hrv:.1f}")
     c5.metric("Avg Sleep", f"{avg_sleep:.1f} h")
