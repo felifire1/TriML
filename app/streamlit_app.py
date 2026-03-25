@@ -7,7 +7,6 @@ Explore any of the 1,000 synthetic triathlete profiles:
   Panel 3 – Stress & Body Battery (AM vs PM shaded + stress line)
   Panel 4 – Training Load (TSS bars color-coded by sport + 7d/28d rolling + injury markers)
   Panel 5 – Activity Log (raw session table for selected date range)
-
 Run:
     streamlit run app/streamlit_app.py
 """
@@ -80,6 +79,7 @@ def load_all_data(data_dir: str):
     merged = build_merged(daily, act_agg, ath)
     demo_id = find_demo_athlete(merged, act)
     return merged, act, ath, demo_id
+
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +458,7 @@ def main():
         "🔵 Blue bars = bike  ·  🟠 Orange = run  ·  "
         "🟢 Green = swim  ·  ⚫ Gray = strength"
     )
+
 
 
 if __name__ == "__main__":
