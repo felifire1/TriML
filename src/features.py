@@ -57,7 +57,7 @@ FEATURE_COLS = [
     "training_experience",
     "weekly_training_hours",
     "gender_enc",
-    "experience_enc",
+    "lifestyle_enc",
 ]
 
 
@@ -156,12 +156,12 @@ def engineer_features(df_merged: pd.DataFrame) -> pd.DataFrame:
         Same DataFrame with additional feature columns + grit_score + load_class.
     """
     # Encode categoricals once (consistent codes across all athletes)
-    gender_enc = LabelEncoder().fit(df_merged["gender"])
-    exp_enc    = LabelEncoder().fit(df_merged["experience_level"])
+    gender_enc    = LabelEncoder().fit(df_merged["gender"])
+    lifestyle_enc = LabelEncoder().fit(df_merged["lifestyle"])
 
     df_merged = df_merged.copy()
-    df_merged["gender_enc"]     = gender_enc.transform(df_merged["gender"])
-    df_merged["experience_enc"] = exp_enc.transform(df_merged["experience_level"])
+    df_merged["gender_enc"]    = gender_enc.transform(df_merged["gender"])
+    df_merged["lifestyle_enc"] = lifestyle_enc.transform(df_merged["lifestyle"])
 
     # Apply rolling feature engineering per athlete
     parts = []

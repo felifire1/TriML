@@ -14,6 +14,7 @@ import ast
 import re
 import urllib.request
 from pathlib import Path
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -36,7 +37,7 @@ _FILE_SIZES = {
 }
 
 
-def ensure_data(data_dir: Path | None = None, progress_callback=None) -> Path:
+def ensure_data(data_dir: Optional[Path] = None, progress_callback=None) -> Path:
     """
     Make sure all three CSV files exist in data_dir.
 
@@ -91,7 +92,7 @@ def ensure_data(data_dir: Path | None = None, progress_callback=None) -> Path:
 # Internal parsers for string-encoded columns
 # ---------------------------------------------------------------------------
 
-def _parse_hrv_range(s: str) -> tuple[float, float]:
+def _parse_hrv_range(s: str):
     """
     Parse hrv_range strings like '(np.float64(82.9), np.float64(112.1))'
     into a (min, max) float tuple.
@@ -109,7 +110,7 @@ def _parse_hr_zones_athlete(s: str) -> dict:
     return ast.literal_eval(cleaned)
 
 
-def _parse_zone_dict(s) -> dict | None:
+def _parse_zone_dict(s):
     """
     Parse activity_data hr_zones / power_zones — clean dicts, no wrappers.
     Returns None for missing values.
@@ -123,7 +124,7 @@ def _parse_zone_dict(s) -> dict | None:
 # Public loaders
 # ---------------------------------------------------------------------------
 
-def load_athletes(path: str | Path | None = None) -> pd.DataFrame:
+def load_athletes(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     """
     Load athletes.csv and expand string-encoded columns into numeric ones.
 
@@ -154,7 +155,7 @@ def load_athletes(path: str | Path | None = None) -> pd.DataFrame:
     return df
 
 
-def load_daily(path: str | Path | None = None) -> pd.DataFrame:
+def load_daily(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     """
     Load daily_data.csv. Parses date column; sorts by (athlete_id, date).
 
@@ -168,7 +169,7 @@ def load_daily(path: str | Path | None = None) -> pd.DataFrame:
     return df
 
 
-def load_activities(path: str | Path | None = None) -> pd.DataFrame:
+def load_activities(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     """
     Load activity_data.csv and expand hr_zones / power_zones into numeric columns.
 
