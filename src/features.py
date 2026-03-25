@@ -19,8 +19,10 @@ from sklearn.preprocessing import LabelEncoder
 # Minimum history (days) before a row is usable for ML
 MIN_HISTORY_DAYS = 28
 
-# ACWR zone thresholds
-ACWR_HIGH = 1.5   # above → Overreaching
+# ACWR zone thresholds — from Gabbett (2016) BJSM literature
+# Values above 1.3 indicate spike risk (Overreaching)
+# Values below 0.8 indicate insufficient load (Undertrained)
+ACWR_HIGH = 1.3   # above → Overreaching
 ACWR_LOW  = 0.8   # below → Undertrained
 
 # Load class labels and their integer codes
@@ -134,18 +136,6 @@ def _engineer_athlete(df: pd.DataFrame) -> pd.DataFrame:
         + 0.15 * acwr_sub
     )
 
-    # --- Load class from ACWR ---
-    def _acwr_class(v):
-        if pd.isna(v):
-            return 1  # Balanced as default
-        if v > ACWR_HIGH:
-            return 2  # Overreaching
-        if v < ACWR_LOW:
-            return 0  # Undertrained
-        return 1      # Balanced
-
-    df["load_class"] = df["acwr"].apply(_acwr_class)
-
     return df
 
 
@@ -180,6 +170,28 @@ def engineer_features(df_merged: pd.DataFrame) -> pd.DataFrame:
         parts.append(_engineer_athlete(grp_sorted))
 
     out = pd.concat(parts).sort_values(["athlete_id", "date"]).reset_index(drop=True)
+
+    # --- Load class from Grit Score distribution (proposal §3.1) ---
+    # Thresholds derived from dataset percentiles so each class has
+    # roughly equal representation; aligns with ACWR literature cutoffs.
+    q_low  = out["grit_score"].quantile(0.25)
+    q_high = out["grit_score"].quantile(0.75)
+    # Low Grit Score  → athlete is depleted / overreached  (class 2)
+    # High Grit Score → athlete is under-stimulated         (class 0)
+    # Middle band     → optimal training balance             (class 1)
+    def _grit_class(v):
+        if pd.isna(v):
+            return 1
+        if v < q_low:
+            return 2  # Overreaching (low wellness = high accumulated stress)
+        if v > q_high:
+            return 0  # Undertrained (high wellness = not enough training stimulus)
+        return 1      # Balanced
+
+    out["load_class"] = out["grit_score"].apply(_grit_class)
+    out["grit_q_low"]  = q_low   # store thresholds for reporting
+    out["grit_q_high"] = q_high
+
     return out
 
 

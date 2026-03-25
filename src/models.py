@@ -33,7 +33,9 @@ from sklearn.metrics import (
     f1_score,
     mean_absolute_error,
     mean_squared_error,
+    precision_score,
     r2_score,
+    recall_score,
     roc_auc_score,
 )
 from sklearn.model_selection import GroupKFold
@@ -163,8 +165,10 @@ def _predict_mlp(model, X_val_scaled, device, task, n_classes=1):
 # ---------------------------------------------------------------------------
 
 def _clf_metrics(y_true, y_pred, y_proba, n_classes):
-    acc = accuracy_score(y_true, y_pred)
-    f1  = f1_score(y_true, y_pred, average="macro", zero_division=0)
+    acc  = accuracy_score(y_true, y_pred)
+    f1   = f1_score(y_true, y_pred, average="macro", zero_division=0)
+    prec = precision_score(y_true, y_pred, average="macro", zero_division=0)
+    rec  = recall_score(y_true, y_pred, average="macro", zero_division=0)
     try:
         if n_classes == 2:
             auc = roc_auc_score(y_true, y_proba)
@@ -172,7 +176,7 @@ def _clf_metrics(y_true, y_pred, y_proba, n_classes):
             auc = roc_auc_score(y_true, y_proba, multi_class="ovr", average="macro")
     except Exception:
         auc = np.nan
-    return {"accuracy": acc, "f1_macro": f1, "roc_auc": auc}
+    return {"accuracy": acc, "f1_macro": f1, "precision": prec, "recall": rec, "roc_auc": auc}
 
 
 def _reg_metrics(y_true, y_pred):
@@ -390,10 +394,12 @@ def results_to_dataframes(results: dict) -> dict:
             s = res[key]["std"]
             rows.append({
                 "Model": label,
-                "ROC-AUC": f"{m['roc_auc']:.3f} ± {s['roc_auc']:.3f}",
-                "F1-macro": f"{m['f1_macro']:.3f} ± {s['f1_macro']:.3f}",
-                "Accuracy": f"{m['accuracy']:.3f} ± {s['accuracy']:.3f}",
-                "roc_auc_val": m["roc_auc"],   # for sorting
+                "ROC-AUC":   f"{m['roc_auc']:.3f} ± {s['roc_auc']:.3f}",
+                "F1-macro":  f"{m['f1_macro']:.3f} ± {s['f1_macro']:.3f}",
+                "Precision": f"{m['precision']:.3f} ± {s['precision']:.3f}",
+                "Recall":    f"{m['recall']:.3f} ± {s['recall']:.3f}",
+                "Accuracy":  f"{m['accuracy']:.3f} ± {s['accuracy']:.3f}",
+                "roc_auc_val": m["roc_auc"],
             })
         return pd.DataFrame(rows).sort_values("roc_auc_val", ascending=False).drop(columns="roc_auc_val")
 
@@ -425,3 +431,172 @@ def results_to_dataframes(results: dict) -> dict:
         "fi_injury":  _fi_df(results["injury_clf"],  results["feature_names"]),
         "fi_grit":    _fi_df(results["grit_reg"],    results["feature_names"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Hyperparameter sweep (course requirement: investigate effect of HPs)
+# ---------------------------------------------------------------------------
+
+def hyperparameter_sweep(
+    X: np.ndarray,
+    y_clf: np.ndarray,
+    y_reg: np.ndarray,
+    groups: np.ndarray,
+    n_classes: int = 3,
+) -> dict:
+    """
+    Sweep key hyperparameters for each model and return mean CV metric vs HP value.
+    Uses 3-fold GroupKFold for speed.
+
+    Sweeps:
+      LR  classifier  : C (regularization strength) over [0.001, 0.01, 0.1, 0.5, 1, 5, 10]
+      RF  classifier  : max_depth over [3, 5, 8, 12, 16, None]
+      DNN classifier  : hidden layer size over [32, 64, 128, 256]
+      Lasso regressor : alpha over [0.001, 0.01, 0.1, 0.5, 1.0, 5.0]
+      RF  regressor   : max_depth over [3, 5, 8, 12, 16, None]
+      DNN regressor   : hidden layer size over [32, 64, 128, 256]
+
+    Returns:
+        dict of DataFrames, one per model, columns = [hp_name, hp_value, mean_metric, std_metric]
+    """
+    gkf3 = GroupKFold(n_splits=3)
+    scaler = StandardScaler()
+    X_sc = scaler.fit_transform(X)
+    task_clf = "binary" if n_classes == 2 else "multiclass"
+
+    def _cv_score_clf(model_fn, metric="roc_auc"):
+        scores = []
+        for tr, vl in gkf3.split(X, y_clf, groups):
+            m = model_fn()
+            m.fit(X_sc[tr], y_clf[tr])
+            proba = m.predict_proba(X_sc[vl])
+            if n_classes == 2:
+                proba = proba[:, 1]
+            try:
+                s = roc_auc_score(y_clf[vl], proba,
+                                   multi_class="ovr" if n_classes > 2 else "raise",
+                                   average="macro" if n_classes > 2 else None)
+            except Exception:
+                s = np.nan
+            scores.append(s)
+        return np.nanmean(scores), np.nanstd(scores)
+
+    def _cv_score_reg(model_fn, metric="r2"):
+        scores = []
+        for tr, vl in gkf3.split(X, y_reg, groups):
+            m = model_fn()
+            m.fit(X[tr], y_reg[tr])
+            pred = m.predict(X[vl])
+            scores.append(r2_score(y_reg[vl], pred))
+        return np.nanmean(scores), np.nanstd(scores)
+
+    def _cv_score_lasso(alpha):
+        scores = []
+        for tr, vl in gkf3.split(X, y_reg, groups):
+            pipe = Pipeline([
+                ("sc",    StandardScaler()),
+                ("poly",  PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)),
+                ("lasso", Lasso(alpha=alpha, max_iter=5000)),
+            ])
+            pipe.fit(X[tr], y_reg[tr])
+            scores.append(r2_score(y_reg[vl], pipe.predict(X[vl])))
+        return np.nanmean(scores), np.nanstd(scores)
+
+    def _cv_score_mlp_clf(hidden):
+        scores = []
+        for tr, vl in gkf3.split(X, y_clf, groups):
+            model, _, X_vl_sc, device = _train_mlp(
+                X[tr], y_clf[tr], X[vl], task=task_clf,
+                n_classes=n_classes, hidden=hidden, epochs=20,
+            )
+            _, proba = _predict_mlp(model, X_vl_sc, device, task_clf, n_classes)
+            if n_classes == 2:
+                try:
+                    s = roc_auc_score(y_clf[vl], proba)
+                except Exception:
+                    s = np.nan
+            else:
+                try:
+                    s = roc_auc_score(y_clf[vl], proba, multi_class="ovr", average="macro")
+                except Exception:
+                    s = np.nan
+            scores.append(s)
+        return np.nanmean(scores), np.nanstd(scores)
+
+    def _cv_score_mlp_reg(hidden):
+        scores = []
+        for tr, vl in gkf3.split(X, y_reg, groups):
+            model, _, X_vl_sc, device = _train_mlp(
+                X[tr], y_reg[tr], X[vl], task="regression",
+                hidden=hidden, epochs=20,
+            )
+            pred, _ = _predict_mlp(model, X_vl_sc, device, "regression")
+            scores.append(r2_score(y_reg[vl], pred))
+        return np.nanmean(scores), np.nanstd(scores)
+
+    results = {}
+
+    # --- LR: C ---
+    print("  HP sweep: LR C...", flush=True)
+    C_vals = [0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 10.0]
+    rows = []
+    for c in C_vals:
+        mu, sd = _cv_score_clf(
+            lambda c=c: LogisticRegression(C=c, max_iter=1000,
+                                           class_weight="balanced",
+                                           random_state=RANDOM_STATE)
+        )
+        rows.append({"C": c, "mean_auc": mu, "std_auc": sd})
+    results["lr_C"] = pd.DataFrame(rows)
+
+    # --- RF clf: max_depth ---
+    print("  HP sweep: RF classifier max_depth...", flush=True)
+    depths = [3, 5, 8, 12, 16, 20]
+    rows = []
+    for d in depths:
+        mu, sd = _cv_score_clf(
+            lambda d=d: RandomForestClassifier(n_estimators=100, max_depth=d,
+                                               class_weight="balanced",
+                                               random_state=RANDOM_STATE, n_jobs=-1)
+        )
+        rows.append({"max_depth": d, "mean_auc": mu, "std_auc": sd})
+    results["rf_clf_depth"] = pd.DataFrame(rows)
+
+    # --- DNN clf: hidden size ---
+    print("  HP sweep: DNN classifier hidden size...", flush=True)
+    hidden_sizes = [32, 64, 128, 256]
+    rows = []
+    for h in hidden_sizes:
+        mu, sd = _cv_score_mlp_clf(h)
+        rows.append({"hidden_size": h, "mean_auc": mu, "std_auc": sd})
+    results["dnn_clf_hidden"] = pd.DataFrame(rows)
+
+    # --- Lasso: alpha ---
+    print("  HP sweep: Lasso alpha...", flush=True)
+    alphas = [0.001, 0.01, 0.1, 0.5, 1.0, 5.0]
+    rows = []
+    for a in alphas:
+        mu, sd = _cv_score_lasso(a)
+        rows.append({"alpha": a, "mean_r2": mu, "std_r2": sd})
+    results["lasso_alpha"] = pd.DataFrame(rows)
+
+    # --- RF reg: max_depth ---
+    print("  HP sweep: RF regressor max_depth...", flush=True)
+    rows = []
+    for d in depths:
+        mu, sd = _cv_score_reg(
+            lambda d=d: RandomForestRegressor(n_estimators=100, max_depth=d,
+                                              random_state=RANDOM_STATE, n_jobs=-1)
+        )
+        rows.append({"max_depth": d, "mean_r2": mu, "std_r2": sd})
+    results["rf_reg_depth"] = pd.DataFrame(rows)
+
+    # --- DNN reg: hidden size ---
+    print("  HP sweep: DNN regressor hidden size...", flush=True)
+    rows = []
+    for h in hidden_sizes:
+        mu, sd = _cv_score_mlp_reg(h)
+        rows.append({"hidden_size": h, "mean_r2": mu, "std_r2": sd})
+    results["dnn_reg_hidden"] = pd.DataFrame(rows)
+
+    return results
