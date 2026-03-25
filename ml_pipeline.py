@@ -22,11 +22,12 @@ Runs the full machine learning pipeline end-to-end:
   4. Print results tables + save to results/ml_results.pkl
 
 Usage:
-    python ml_pipeline.py [--data-dir PATH] [--results-dir PATH] [--sample N]
+    python ml_pipeline.py [--data-dir PATH] [--results-dir PATH] [--sample N] [--tune]
 
     --data-dir    : directory containing the 3 CSVs (default: auto-detect / Zenodo)
     --results-dir : where to save outputs (default: results/)
     --sample N    : use only N athletes for a quick smoke-test (default: all 1000)
+    --tune        : also run hyperparameter sweep (adds ~10–20 min)
 """
 
 import argparse
@@ -51,7 +52,7 @@ from src.loader import (
     load_daily,
 )
 from src.features import engineer_features, get_feature_matrix, LOAD_CLASSES
-from src.models import run_all_models, results_to_dataframes
+from src.models import run_all_models, results_to_dataframes, hyperparameter_sweep
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +70,7 @@ def _section(title: str):
 def _print_clf_table(res: dict, label: str):
     _section(f"Classification — {label}")
     model_keys = [("lr", "Logistic Regression"), ("rf", "Random Forest"), ("mlp", "DNN (MLP)")]
-    header = f"{'Model':<22} {'ROC-AUC':>12} {'F1-macro':>12} {'Accuracy':>12}"
+    header = f"{'Model':<22} {'ROC-AUC':>12} {'F1-macro':>10} {'Precision':>11} {'Recall':>9} {'Accuracy':>10}"
     print(header)
     print("-" * len(header))
     for key, name in model_keys:
@@ -78,8 +79,10 @@ def _print_clf_table(res: dict, label: str):
         print(
             f"{name:<22} "
             f"{m['roc_auc']:>6.3f}±{s['roc_auc']:.3f}  "
-            f"{m['f1_macro']:>6.3f}±{s['f1_macro']:.3f}  "
-            f"{m['accuracy']:>6.3f}±{s['accuracy']:.3f}"
+            f"{m['f1_macro']:>5.3f}±{s['f1_macro']:.3f}  "
+            f"{m['precision']:>5.3f}±{s['precision']:.3f}  "
+            f"{m['recall']:>5.3f}±{s['recall']:.3f}  "
+            f"{m['accuracy']:>5.3f}±{s['accuracy']:.3f}"
         )
 
 
@@ -112,7 +115,7 @@ def _print_feature_importances(fi: np.ndarray, feature_names: list, label: str, 
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def run(data_dir: Path, results_dir: Path, sample_n: int | None = None):
+def run(data_dir: Path, results_dir: Path, sample_n: int | None = None, tune: bool = False):
 
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -210,10 +213,16 @@ def run(data_dir: Path, results_dir: Path, sample_n: int | None = None):
         "raw": raw_results,
         "tables": results_to_dataframes(raw_results),
         "feature_names": feat_names,
-        "df_feat_sample": df_feat.sample(min(5000, len(df_feat)), random_state=42),  # lightweight slice
+        "df_feat_sample": df_feat.sample(min(5000, len(df_feat)), random_state=42),
     }
     with open(out_path, "wb") as f:
         pickle.dump(payload, f)
+
+    # ------------------------------------------------------------------
+    # 6 (optional). Hyperparameter sweep
+    # ------------------------------------------------------------------
+    if tune:
+        run_hp_sweep(X, y_load, y_grit, groups, results_dir, n_classes=3)
 
     print(f"\n{SEP}")
     print(f"  Results saved → {out_path}")
@@ -221,6 +230,55 @@ def run(data_dir: Path, results_dir: Path, sample_n: int | None = None):
     print(SEP)
 
     return payload
+
+
+def run_hp_sweep(
+    X: np.ndarray,
+    y_load: np.ndarray,
+    y_grit: np.ndarray,
+    groups: np.ndarray,
+    results_dir: Path,
+    n_classes: int = 3,
+):
+    """
+    Run hyperparameter sweep for all 6 models and save + print results.
+    Investigates how each key HP affects CV performance (course requirement).
+    """
+    _section("Hyperparameter Sweep (3-fold GroupKFold)")
+    print("  Sweeping: LR C · RF max_depth · DNN hidden_size")
+    print("  for both classification (load_class) and regression (grit_score)\n")
+
+    t0 = time.time()
+    sweep = hyperparameter_sweep(X, y_load, y_grit, groups, n_classes=n_classes)
+
+    # ---------- Print tables ----------
+    sweep_info = [
+        ("lr_C",          "LR — C (regularization)",      "C",           "mean_auc", "ROC-AUC"),
+        ("rf_clf_depth",  "RF Classifier — max_depth",    "max_depth",   "mean_auc", "ROC-AUC"),
+        ("dnn_clf_hidden","DNN Classifier — hidden size",  "hidden_size", "mean_auc", "ROC-AUC"),
+        ("lasso_alpha",   "Lasso — alpha",                 "alpha",       "mean_r2",  "R²"),
+        ("rf_reg_depth",  "RF Regressor — max_depth",     "max_depth",   "mean_r2",  "R²"),
+        ("dnn_reg_hidden","DNN Regressor — hidden size",   "hidden_size", "mean_r2",  "R²"),
+    ]
+
+    for key, title, hp_col, metric_col, metric_name in sweep_info:
+        df = sweep[key]
+        std_col = metric_col.replace("mean", "std")
+        _section(f"HP Sweep: {title}")
+        print(f"  {hp_col:<15} {metric_name:>8}   std")
+        print(f"  {'─'*35}")
+        for _, row in df.iterrows():
+            best = row[metric_col] == df[metric_col].max()
+            flag = " ◄ best" if best else ""
+            print(f"  {str(row[hp_col]):<15} {row[metric_col]:>8.4f}  ±{row[std_col]:.4f}{flag}")
+
+    # Save
+    sweep_path = results_dir / "hp_sweep.pkl"
+    with open(sweep_path, "wb") as f:
+        pickle.dump(sweep, f)
+
+    print(f"\n  HP sweep done ({time.time()-t0:.1f}s) — saved → {sweep_path}")
+    return sweep
 
 
 # ---------------------------------------------------------------------------
@@ -242,10 +300,15 @@ if __name__ == "__main__":
         "--sample", type=int, default=None, metavar="N",
         help="Use only N athletes (for quick smoke-tests; default: all 1000)",
     )
+    parser.add_argument(
+        "--tune", action="store_true",
+        help="Also run hyperparameter sweep for all 6 models (adds ~10-20 min)",
+    )
     args = parser.parse_args()
 
     run(
         data_dir=args.data_dir,
         results_dir=args.results_dir,
         sample_n=args.sample,
+        tune=args.tune,
     )
