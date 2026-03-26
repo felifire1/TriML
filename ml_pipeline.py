@@ -115,7 +115,7 @@ def _print_feature_importances(fi: np.ndarray, feature_names: list, label: str, 
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def run(data_dir: Path, results_dir: Path, sample_n: int | None = None, tune: bool = False):
+def run(data_dir: Path, results_dir: Path, sample_n=None, tune: bool = False):
 
     results_dir.mkdir(parents=True, exist_ok=True)
 
