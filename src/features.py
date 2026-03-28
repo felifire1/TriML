@@ -111,22 +111,24 @@ def _engineer_athlete(df: pd.DataFrame) -> pd.DataFrame:
     # --- RHR 7-day trend (bpm/day; positive = rising = overreach signal) ---
     df["rhr_trend"] = _rolling_slope(df["resting_hr"], window=7)
 
-    # --- Grit Score sub-scores (each 0–1, higher = better) ---
-    # HRV: z-score mapped to 0–1 via sigmoid
-    hrv_sub   = 1 / (1 + np.exp(-df["hrv_zscore"]))
+    # --- Grit Score sub-scores (each 0–1, higher = MORE STRAIN / DANGER) ---
+    # High Grit = you're grinding through fatigue. Low Grit = you're fresh.
+    #
+    # HRV dropping below baseline → HIGH grit (pushing through poor recovery)
+    hrv_sub   = 1 / (1 + np.exp(df["hrv_zscore"]))   # flipped: negative z = high score
 
-    # Sleep: z-score mapped to 0–1 via sigmoid
-    sleep_sub = 1 / (1 + np.exp(-df["sleep_composite_z"]))
+    # Poor sleep → HIGH grit (training despite bad recovery)
+    sleep_sub = 1 / (1 + np.exp(df["sleep_composite_z"]))  # flipped: negative z = high score
 
-    # Battery: morning battery / 100
-    bat_sub   = (df["body_battery_morning"] / 100).clip(0, 1)
+    # Low battery → HIGH grit (body is depleted)
+    bat_sub   = 1 - (df["body_battery_morning"] / 100).clip(0, 1)
 
-    # Stress: inverse (lower stress = better); assume stress in [0, 100]
+    # High stress → HIGH grit
     stress_max = df["stress"].max() if df["stress"].max() > 0 else 1
-    stress_sub = 1 - (df["stress"] / stress_max).clip(0, 1)
+    stress_sub = (df["stress"] / stress_max).clip(0, 1)
 
-    # ACWR proximity to 1.0 (optimal zone)
-    acwr_sub  = 1 - (df["acwr"] - 1.0).abs().clip(0, 1)
+    # ACWR far from 1.0 (especially > 1.3) → HIGH grit (overreaching)
+    acwr_sub  = (df["acwr"] - 1.0).abs().clip(0, 1)
 
     df["grit_score"] = 100 * (
         0.25 * hrv_sub
@@ -176,16 +178,16 @@ def engineer_features(df_merged: pd.DataFrame) -> pd.DataFrame:
     # roughly equal representation; aligns with ACWR literature cutoffs.
     q_low  = out["grit_score"].quantile(0.25)
     q_high = out["grit_score"].quantile(0.75)
-    # Low Grit Score  → athlete is depleted / overreached  (class 2)
-    # High Grit Score → athlete is under-stimulated         (class 0)
+    # HIGH Grit Score → athlete is grinding / overreached    (class 2)
+    # LOW Grit Score  → athlete is fresh / undertrained      (class 0)
     # Middle band     → optimal training balance             (class 1)
     def _grit_class(v):
         if pd.isna(v):
             return 1
-        if v < q_low:
-            return 2  # Overreaching (low wellness = high accumulated stress)
-        if v > q_high:
-            return 0  # Undertrained (high wellness = not enough training stimulus)
+        if v >= q_high:
+            return 2  # Overreaching (high grit = high danger)
+        if v <= q_low:
+            return 0  # Undertrained (low grit = fresh, room to push)
         return 1      # Balanced
 
     out["load_class"] = out["grit_score"].apply(_grit_class)
