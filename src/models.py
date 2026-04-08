@@ -22,7 +22,7 @@ Evaluation:
 
 import time
 import warnings
-from typing import Any
+from typing import Any, List
 
 import numpy as np
 import pandas as pd
@@ -88,10 +88,11 @@ def _train_mlp(
     X_val: np.ndarray,
     task: str,           # "binary" | "multiclass" | "regression"
     n_classes: int = 1,
+    hidden: int = 128,
     epochs: int = 30,
     batch_size: int = 1024,
     lr: float = 1e-3,
-) -> tuple[MLP, Any]:
+):
     """Train MLP and return (model, scaler)."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -100,7 +101,7 @@ def _train_mlp(
     X_vl = scaler.transform(X_val).astype(np.float32)
 
     out_dim = 1 if task in ("binary", "regression") else n_classes
-    model = MLP(X_tr.shape[1], out_dim).to(device)
+    model = MLP(X_tr.shape[1], out_dim, hidden=hidden).to(device)
 
     # Class weights for imbalanced binary
     if task == "binary":
@@ -354,7 +355,7 @@ def run_all_models(
           "injury_clf":  run_classification_cv output  (binary, target=injury),
           "load_clf":    run_classification_cv output  (3-class, target=load_class),
           "grit_reg":    run_regression_cv output      (target=grit_score),
-          "feature_names": list[str],
+          "feature_names": List[str],
         }
     """
     print("Running injury classification CV...", flush=True)
