@@ -29,31 +29,44 @@ pip install -r requirements.txt
 ```
 
 ### Requirements
-- Python 3.10+
+- Python 3.9+
 - PyTorch (for DNN models)
 - scikit-learn, pandas, numpy, plotly, matplotlib, seaborn
 
 ## Reproducing Results
 
-### 1. Run the ML pipeline (main results)
+### Recommended: Google Colab (GPU)
+
+The easiest way to reproduce all results is via the included Colab notebook, which runs the full pipeline on a free T4 GPU:
+
+1. Open [`TriML_Colab.ipynb`](TriML_Colab.ipynb) in Google Colab
+2. Set runtime to **GPU** (Runtime → Change runtime type → T4 GPU)
+3. Run all cells — downloads data from Zenodo, trains all 9 models, runs HP sweep, and generates all 12 plots
+4. Results are saved to `results/` and can be downloaded as a zip
+
+Total runtime: ~20–30 min on T4 GPU.
+
+### Local: Run step by step
+
+#### 1. Run the ML pipeline (main results)
 ```bash
 python3 ml_pipeline.py
 ```
-Runs all 6 models with 5-fold GroupKFold CV. Takes ~30 min. Results saved to `results/ml_results.pkl`.
+Runs all 6 models with 5-fold GroupKFold CV. Takes ~30 min on CPU. Results saved to `results/ml_results.pkl`.
 
-### 2. Run the hyperparameter sweep
+#### 2. Run the hyperparameter sweep
 ```bash
 python3 ml_pipeline.py --tune
 ```
-Sweeps key hyperparameters for each model. Takes ~30 min. Results saved to `results/hp_sweep.pkl`.
+Sweeps key hyperparameters for each model. Takes ~30 min on CPU. Results saved to `results/hp_sweep.pkl`.
 
-### 3. Generate plots
+#### 3. Generate plots
 ```bash
 python3 generate_plots.py
 ```
-Generates 10 publication-quality plots to `results/plots/`.
+Generates 12 publication-quality plots to `results/plots/`.
 
-### 4. Run the Streamlit dashboard (optional)
+#### 4. Run the Streamlit dashboard (optional)
 ```bash
 streamlit run app/streamlit_app.py
 ```
@@ -88,6 +101,7 @@ Interactive athlete year tracker at `http://localhost:8501`.
 TriML/
   ml_pipeline.py          # Main ML pipeline (features + models + CV)
   generate_plots.py       # Plot generation from results
+  TriML_Colab.ipynb       # Self-contained Colab notebook (recommended)
   requirements.txt        # Python dependencies
   src/
     loader.py             # Data loading + parsing (3 CSVs)
@@ -99,7 +113,7 @@ TriML/
     ml_results.pkl        # Saved CV metrics
     hp_sweep.pkl          # Hyperparameter sweep results
     pipeline_run.log      # Console output log
-    plots/                # 10 PNG visualizations
+    plots/                # 12 PNG visualizations
   data/
     garmin/               # Personal Garmin Connect data (optional)
 ```
