@@ -31,9 +31,7 @@ N_FOLDS = 5
 RANDOM_STATE = 42
 
 
-###############################################################################
 # MLP definition
-###############################################################################
 
 class MLP(nn.Module):
     """3 hidden layer MLP with batchnorm + dropout."""
@@ -132,9 +130,7 @@ def _predict_mlp(model, X_val_scaled, device, task, n_classes=1):
         return logits.squeeze(), None
 
 
-###############################################################################
 # CV runners
-###############################################################################
 
 def _clf_metrics(y_true, y_pred, y_proba, n_classes):
     """Compute classification metrics for one fold."""
@@ -275,9 +271,7 @@ def run_regression_cv(X, y, groups, label="grit_score"):
     return results
 
 
-###############################################################################
 # Run everything
-###############################################################################
 
 def run_all_models(X, y_injury, y_grit, y_load, groups, feature_names):
     """Run all 9 models (3 clf tasks x 3 models each) and return results."""
@@ -348,10 +342,7 @@ def results_to_dataframes(results):
     }
 
 
-###############################################################################
-# Hyperparameter sweep
-# (course requirement: investigate effect of hyperparameters via CV)
-###############################################################################
+# Hyperparameter sweep (course req: investigate effect of HPs via CV)
 
 def hyperparameter_sweep(X, y_clf, y_reg, groups, n_classes=3):
     """
