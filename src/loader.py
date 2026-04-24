@@ -1,14 +1,9 @@
-"""
-Data loading and parsing for the TriML project.
-
-Handles the three raw CSVs:
-  - athletes.csv       : 1,000 static athlete profiles
-  - daily_data.csv     : 366,000 daily wearable readings (1,000 athletes × 366 days)
-  - activity_data.csv  : 384,153 training session records
-
-All string-encoded columns (hrv_range, hr_zones, power_zones) are parsed
-into proper numeric columns here so downstream code never has to deal with them.
-"""
+# loader.py - Data loading and parsing for TriML
+# CS 6140 - Spring 2026
+#
+# Handles the 3 raw CSVs from Zenodo:
+#   athletes.csv (1000 athletes), daily_data.csv (366k rows), activity_data.csv (384k rows)
+# Parses string-encoded columns (hrv_range, hr_zones, power_zones) into proper numerics.
 
 import ast
 import re
@@ -19,17 +14,18 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-# Default path: CSVs live in the project root
+# project root (CSVs sit here)
 _ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = _ROOT  # athletes.csv / daily_data.csv / activity_data.csv are in root
+DATA_DIR = _ROOT
 
-# Public Zenodo download URLs (record 15401061)
+# zenodo download URLs
 _ZENODO_URLS = {
     "athletes.csv": "https://zenodo.org/api/records/15401061/files/athletes.csv/content",
     "daily_data.csv": "https://zenodo.org/api/records/15401061/files/daily_data.csv/content",
     "activity_data.csv": "https://zenodo.org/api/records/15401061/files/activity_data.csv/content",
 }
 
+# approximate file sizes for checking completeness
 _FILE_SIZES = {
     "athletes.csv": 465_161,
     "daily_data.csv": 71_186_033,
@@ -37,29 +33,11 @@ _FILE_SIZES = {
 }
 
 
-def ensure_data(data_dir: Optional[Path] = None, progress_callback=None) -> Path:
-    """
-    Make sure all three CSV files exist in data_dir.
-
-    Resolution order:
-      1. Caller-supplied data_dir
-      2. Project root (works locally where CSVs sit next to the code)
-      3. /tmp/triml_data  (fallback for read-only cloud filesystems)
-
-    If any CSV is missing, it is downloaded from Zenodo.
-
-    Args:
-        data_dir: Directory to store/find CSVs.
-        progress_callback: Optional callable(filename, bytes_downloaded, total_bytes).
-
-    Returns:
-        The resolved data_dir Path where all CSVs are guaranteed to exist.
-    """
-    # Determine a writable directory
+def ensure_data(data_dir=None, progress_callback=None):
+    """Make sure all 3 CSVs exist, downloading from Zenodo if needed."""
     if data_dir:
         data_dir = Path(data_dir)
     else:
-        # Try project root first (local dev); fall back to /tmp on cloud
         candidate = DATA_DIR
         try:
             candidate.mkdir(parents=True, exist_ok=True)
@@ -74,7 +52,7 @@ def ensure_data(data_dir: Optional[Path] = None, progress_callback=None) -> Path
     for filename, url in _ZENODO_URLS.items():
         dest = data_dir / filename
         if dest.exists() and dest.stat().st_size > _FILE_SIZES[filename] * 0.9:
-            continue  # already present and looks complete
+            continue  # already downloaded
 
         total = _FILE_SIZES[filename]
 
@@ -88,63 +66,41 @@ def ensure_data(data_dir: Optional[Path] = None, progress_callback=None) -> Path
     return data_dir
 
 
-# ---------------------------------------------------------------------------
-# Internal parsers for string-encoded columns
-# ---------------------------------------------------------------------------
+# --- parsers for weird string columns in the CSVs ---
 
-def _parse_hrv_range(s: str):
-    """
-    Parse hrv_range strings like '(np.float64(82.9), np.float64(112.1))'
-    into a (min, max) float tuple.
-    """
+def _parse_hrv_range(s):
+    """Parse strings like '(np.float64(82.9), np.float64(112.1))' into (min, max)."""
     nums = re.findall(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", str(s))
     return float(nums[0]), float(nums[1])
 
 
-def _parse_hr_zones_athlete(s: str) -> dict:
-    """
-    Parse athletes.csv hr_zones strings that contain np.float64() wrappers.
-    Returns dict like {'Z1': (lo, hi), 'Z2': (lo, hi), ...} with plain floats.
-    """
+def _parse_hr_zones_athlete(s):
+    """Parse athlete hr_zones with np.float64() wrappers."""
     cleaned = re.sub(r"np\.float64\(([^)]+)\)", r"\1", str(s))
     return ast.literal_eval(cleaned)
 
 
 def _parse_zone_dict(s):
-    """
-    Parse activity_data hr_zones / power_zones — clean dicts, no wrappers.
-    Returns None for missing values.
-    """
+    """Parse hr_zones/power_zones dicts from activity data."""
     if pd.isna(s):
         return None
     return ast.literal_eval(str(s))
 
 
-# ---------------------------------------------------------------------------
-# Public loaders
-# ---------------------------------------------------------------------------
+# --- loaders ---
 
-def load_athletes(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
-    """
-    Load athletes.csv and expand string-encoded columns into numeric ones.
-
-    Added columns (replacing originals):
-      hrv_min, hrv_max           – from hrv_range
-      hr_zone{1..6}_lo/hi        – from hr_zones (12 boundary columns)
-
-    Returns:
-        DataFrame, 1,000 rows × ~34 columns, no nulls.
-    """
+def load_athletes(path=None):
+    """Load athletes.csv. Expands hrv_range and hr_zones into numeric columns."""
     path = Path(path) if path else DATA_DIR / "athletes.csv"
     df = pd.read_csv(path)
 
-    # --- hrv_range → hrv_min, hrv_max ---
+    # hrv_range -> hrv_min, hrv_max
     parsed = df["hrv_range"].apply(_parse_hrv_range)
     df["hrv_min"] = parsed.apply(lambda t: t[0])
     df["hrv_max"] = parsed.apply(lambda t: t[1])
     df.drop(columns=["hrv_range"], inplace=True)
 
-    # --- hr_zones → 12 boundary columns ---
+    # hr_zones -> 12 boundary columns (Z1-Z6, lo/hi each)
     parsed_zones = df["hr_zones"].apply(_parse_hr_zones_athlete)
     for z in range(1, 7):
         key = f"Z{z}"
@@ -155,13 +111,8 @@ def load_athletes(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     return df
 
 
-def load_daily(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
-    """
-    Load daily_data.csv. Parses date column; sorts by (athlete_id, date).
-
-    Returns:
-        DataFrame, 366,000 rows × 15 columns, no nulls.
-    """
+def load_daily(path=None):
+    """Load daily_data.csv. Parses dates, sorts by athlete+date."""
     path = Path(path) if path else DATA_DIR / "daily_data.csv"
     df = pd.read_csv(path, parse_dates=["date"])
     df.sort_values(["athlete_id", "date"], inplace=True)
@@ -169,23 +120,14 @@ def load_daily(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     return df
 
 
-def load_activities(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
-    """
-    Load activity_data.csv and expand hr_zones / power_zones into numeric columns.
-
-    Added columns (replacing originals):
-      hr_z{1..6}_pct     – percent time in each HR zone
-      pwr_z{1..7}_pct    – percent time in each power zone (0 for non-cycling)
-
-    Returns:
-        DataFrame, 384,153 rows × ~33 columns.
-    """
+def load_activities(path=None):
+    """Load activity_data.csv. Expands hr_zones and power_zones into pct columns."""
     path = Path(path) if path else DATA_DIR / "activity_data.csv"
     df = pd.read_csv(path, parse_dates=["date"])
     df.sort_values(["athlete_id", "date"], inplace=True)
     df.reset_index(drop=True, inplace=True)
 
-    # --- hr_zones → 6 percentage columns ---
+    # hr_zones -> 6 pct columns
     parsed_hr = df["hr_zones"].apply(_parse_zone_dict)
     for z in range(1, 7):
         key = f"Z{z}"
@@ -194,7 +136,7 @@ def load_activities(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
         )
     df.drop(columns=["hr_zones"], inplace=True)
 
-    # --- power_zones → 7 percentage columns (0 for non-cycling) ---
+    # power_zones -> 7 pct columns (0 for non-cycling days)
     parsed_pwr = df["power_zones"].apply(_parse_zone_dict)
     for z in range(1, 8):
         key = f"Z{z}"
@@ -206,31 +148,19 @@ def load_activities(path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     return df
 
 
-def aggregate_activities(df_act: pd.DataFrame) -> pd.DataFrame:
-    """
-    Collapse activity_data to one row per (athlete_id, date).
-
-    Aggregations:
-      Sum:   tss, duration_minutes, work_kilojoules
-      Mean:  intensity_factor, avg_hr, training_effect_aerobic,
-             training_effect_anaerobic, hr_z*_pct
-      Count per sport: n_bike, n_run, n_swim, n_strength
-      Sports list:     sports_of_day (e.g. "bike,run")
-      Dominant sport:  dominant_sport (highest-TSS sport that day)
-
-    Returns:
-        DataFrame, one row per (athlete_id, date).
-    """
+def aggregate_activities(df_act):
+    """Collapse activity data to one row per (athlete, date).
+    Sums TSS/duration, averages intensity/HR, counts sessions per sport."""
     zone_cols = [f"hr_z{z}_pct" for z in range(1, 7)] + [
         f"pwr_z{z}_pct" for z in range(1, 8)
     ]
 
-    # Per-sport session counts
+    # per-sport session counts
     sport_dummies = pd.get_dummies(df_act["sport"], prefix="n")
     df_act = pd.concat([df_act, sport_dummies], axis=1)
     sport_count_cols = [c for c in df_act.columns if c.startswith("n_")]
 
-    # Dominant sport per day (sport with most TSS; ties broken alphabetically)
+    # which sport had most TSS that day
     def _dominant_sport(sub):
         return sub.groupby("sport")["tss"].sum().idxmax()
 
@@ -241,7 +171,7 @@ def aggregate_activities(df_act: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    # Sports list per day
+    # list of sports done that day
     sports_list = (
         df_act.groupby(["athlete_id", "date"])["sport"]
         .apply(lambda x: ",".join(sorted(x.unique())))
@@ -249,7 +179,7 @@ def aggregate_activities(df_act: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    # Main aggregation
+    # main aggregation
     agg_dict = {
         "tss": "sum",
         "duration_minutes": "sum",
@@ -266,13 +196,10 @@ def aggregate_activities(df_act: pd.DataFrame) -> pd.DataFrame:
 
     agg = df_act.groupby(["athlete_id", "date"]).agg(agg_dict).reset_index()
 
-    # Rename sport count columns: n_bike, n_run, n_swim, n_strength
-    rename_map = {c: c.replace("n_", "n_") for c in sport_count_cols}
-    # Ensure canonical column names regardless of get_dummies prefix
+    # make sure we have columns for all 4 sports even if some aren't present
     for sport in ["bike", "run", "swim", "strength"]:
-        old = f"n_{sport}"
-        if old not in agg.columns:
-            agg[old] = 0
+        if f"n_{sport}" not in agg.columns:
+            agg[f"n_{sport}"] = 0
 
     agg = agg.merge(dominant, on=["athlete_id", "date"], how="left")
     agg = agg.merge(sports_list, on=["athlete_id", "date"], how="left")
@@ -280,22 +207,11 @@ def aggregate_activities(df_act: pd.DataFrame) -> pd.DataFrame:
     return agg
 
 
-def build_merged(
-    df_daily: pd.DataFrame,
-    df_act_agg: pd.DataFrame,
-    df_athletes: pd.DataFrame,
-) -> pd.DataFrame:
+def build_merged(df_daily, df_act_agg, df_athletes):
     """
-    Left-join all three tables into one analysis-ready DataFrame.
-
-      daily_data (366,000 rows)
-        ← activity aggregate on (athlete_id, date)   [rest days get 0]
-        ← athlete static features on athlete_id
-
-    Returns:
-        DataFrame, 366,000 rows × ~70 columns, no nulls in core columns.
+    Left-join daily + activity + athlete tables into one dataframe.
+    Rest days (no activity) get 0 for training metrics.
     """
-    # Merge activity aggregates onto daily rows (rest days get NaN → fill 0)
     df = df_daily.merge(df_act_agg, on=["athlete_id", "date"], how="left")
 
     activity_numeric_cols = [
@@ -306,33 +222,25 @@ def build_merged(
     df["dominant_sport"] = df["dominant_sport"].fillna("rest")
     df["sports_of_day"] = df["sports_of_day"].fillna("")
 
-    # Rename athlete columns that collide with daily_data columns before merging
-    # (athletes has baseline values; daily has actual daily measurements)
+    # rename athlete columns that would collide with daily data
     df_athletes = df_athletes.rename(columns={
         "resting_hr": "baseline_rhr",
         "sleep_quality": "baseline_sleep_quality",
     })
 
-    # Merge static athlete profile
     df = df.merge(df_athletes, on="athlete_id", how="left")
-
     df.sort_values(["athlete_id", "date"], inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
 
 
-def find_demo_athlete(df_merged: pd.DataFrame, df_act: pd.DataFrame) -> str:
-    """
-    Return the athlete_id of the most-injured athlete who also has all four
-    sport types in their activity log. Used as the default in the Streamlit app.
-    """
-    # Athletes with all 4 sports
+def find_demo_athlete(df_merged, df_act):
+    """Find the most-injured athlete who has all 4 sport types (for the Streamlit demo)."""
     sports_per_athlete = df_act.groupby("athlete_id")["sport"].apply(set)
     full_sport_athletes = sports_per_athlete[
         sports_per_athlete.apply(lambda s: {"bike", "run", "swim", "strength"}.issubset(s))
     ].index
 
-    # Among those, pick the one with most injury days
     injury_counts = (
         df_merged[df_merged["athlete_id"].isin(full_sport_athletes)]
         .groupby("athlete_id")["injury"]

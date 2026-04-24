@@ -1,26 +1,28 @@
-# TriML -- Predicting Athlete Training State and Injury Risk from Wearable Sensor Data
+# TriML
 
-**CS 6140: Machine Learning | Northeastern University | Spring 2026**
+**CS 6140: Machine Learning — Northeastern University — Spring 2026**
 
 William Felipe Quiroz
 
-## Overview
+## What is this
 
-This project predicts an athlete's current training state (Overreaching / Balanced / Undertrained) and injury risk from daily wearable sensor data. We engineer a composite **Grit Score** from training load and recovery metrics, then apply 3 classifiers and 3 regressors with 5-fold GroupKFold cross-validation across 1,000 synthetic triathletes.
+Predicting athlete training state and injury risk from wearable data. Uses a synthetic triathlete dataset (1000 athletes, ~366k daily records) to train classifiers and regressors. I engineered a composite "Grit Score" from recovery/training metrics, then used it alongside ACWR and other features.
+
+**Models:** 3 classifiers (Logistic Regression, Random Forest, DNN) + 3 regressors (Lasso+Poly, Random Forest, DNN), all evaluated with 5-fold GroupKFold CV (grouped by athlete so no athlete leaks between train/test).
 
 ## Dataset
 
-[Synthetic Triathlete Dataset for Injury Prediction Research (2024)](https://zenodo.org/records/15401061) -- Rossi, University of St. Gallen.
+From Zenodo: [Synthetic Triathlete Dataset for Injury Prediction Research](https://zenodo.org/records/15401061) — Rossi, University of St. Gallen, 2024.
 
-| File | Rows | Description |
+| File | Rows | What it is |
 |---|---|---|
-| `athletes.csv` | 1,000 | Static athlete profiles (age, gender, VO2max, FTP, etc.) |
-| `daily_data.csv` | 366,000 | Daily wearable readings (HRV, RHR, sleep, stress, body battery) |
-| `activity_data.csv` | 384,153 | Individual training sessions (TSS, HR zones, power zones) |
+| `athletes.csv` | 1,000 | Athlete profiles (age, gender, VO2max, FTP, etc.) |
+| `daily_data.csv` | 366,000 | Daily wearable data (HRV, RHR, sleep, stress, body battery) |
+| `activity_data.csv` | 384,153 | Training sessions (TSS, HR zones, power zones) |
 
-Data is auto-downloaded from Zenodo on first run.
+Data auto-downloads from Zenodo on first run.
 
-## Installation
+## Setup
 
 ```bash
 git clone https://github.com/felifire1/TriML.git
@@ -28,51 +30,36 @@ cd TriML
 pip install -r requirements.txt
 ```
 
-### Requirements
-- Python 3.9+
-- PyTorch (for DNN models)
-- scikit-learn, pandas, numpy, plotly, matplotlib, seaborn
+Needs Python 3.9+, PyTorch, scikit-learn, pandas, numpy, matplotlib, seaborn.
 
-## Reproducing Results
+## How to reproduce
 
-### Recommended: Google Colab (GPU)
+### Option 1: Colab (recommended)
 
-The easiest way to reproduce all results is via the included Colab notebook, which runs the full pipeline on a free T4 GPU:
+Easiest way — runs on a free T4 GPU, takes ~20-30 min:
 
 1. Open [`TriML_Colab.ipynb`](TriML_Colab.ipynb) in Google Colab
-2. Set runtime to **GPU** (Runtime → Change runtime type → T4 GPU)
-3. Run all cells — downloads data from Zenodo, trains all 9 models, runs HP sweep, and generates all 12 plots
-4. Results are saved to `results/` and can be downloaded as a zip
+2. Set runtime to GPU (Runtime -> Change runtime type -> T4)
+3. Run all cells
+4. Download results zip when done
 
-Total runtime: ~20–30 min on T4 GPU.
+### Option 2: Run locally
 
-### Local: Run step by step
-
-#### 1. Run the ML pipeline (main results)
 ```bash
+# train all models (~30 min on CPU)
 python3 ml_pipeline.py
-```
-Runs all 6 models with 5-fold GroupKFold CV. Takes ~30 min on CPU. Results saved to `results/ml_results.pkl`.
 
-#### 2. Run the hyperparameter sweep
-```bash
+# also run HP sweep
 python3 ml_pipeline.py --tune
-```
-Sweeps key hyperparameters for each model. Takes ~30 min on CPU. Results saved to `results/hp_sweep.pkl`.
 
-#### 3. Generate plots
-```bash
+# generate plots
 python3 generate_plots.py
-```
-Generates 12 publication-quality plots to `results/plots/`.
 
-#### 4. Run the Streamlit dashboard (optional)
-```bash
+# optional: streamlit dashboard
 streamlit run app/streamlit_app.py
 ```
-Interactive athlete year tracker at `http://localhost:8501`.
 
-## Results Summary
+## Results
 
 ### Injury Classification (binary)
 | Model | ROC-AUC | F1-macro | Accuracy |
@@ -81,41 +68,38 @@ Interactive athlete year tracker at `http://localhost:8501`.
 | Random Forest | 0.901 | 0.839 | 95.1% |
 | **DNN (MLP)** | **0.948** | **0.871** | **95.5%** |
 
-### Load Class Classification (3-class)
+### Load Classification (3-class)
 | Model | ROC-AUC | F1-macro | Accuracy |
 |---|---|---|---|
 | Logistic Regression | 0.988 | 0.914 | 91.3% |
 | Random Forest | 0.987 | 0.914 | 91.3% |
 | **DNN (MLP)** | **0.997** | **0.959** | **95.9%** |
 
-### Grit Score Regression (0-100)
-| Model | RMSE | R-squared |
+### Grit Score Regression
+| Model | RMSE | R² |
 |---|---|---|
 | Lasso + Poly | 1.81 | 0.973 |
 | Random Forest | 1.54 | 0.981 |
 | **DNN (MLP)** | **1.19** | **0.988** |
 
-## Project Structure
+## File structure
 
 ```
 TriML/
-  ml_pipeline.py          # Main ML pipeline (features + models + CV)
-  generate_plots.py       # Plot generation from results
-  TriML_Colab.ipynb       # Self-contained Colab notebook (recommended)
-  requirements.txt        # Python dependencies
+  ml_pipeline.py          # main pipeline
+  generate_plots.py       # plotting
+  TriML_Colab.ipynb       # colab notebook
+  requirements.txt
   src/
-    loader.py             # Data loading + parsing (3 CSVs)
-    features.py           # Feature engineering + Grit Score
-    models.py             # Model definitions (sklearn + PyTorch)
+    loader.py             # data loading/parsing
+    features.py           # feature engineering + grit score
+    models.py             # model defs + CV
   app/
-    streamlit_app.py      # Interactive dashboard
+    streamlit_app.py      # dashboard
   results/
-    ml_results.pkl        # Saved CV metrics
-    hp_sweep.pkl          # Hyperparameter sweep results
-    pipeline_run.log      # Console output log
-    plots/                # 12 PNG visualizations
-  data/
-    garmin/               # Personal Garmin Connect data (optional)
+    ml_results.pkl
+    hp_sweep.pkl
+    plots/                # 12 PNGs
 ```
 
 ## References

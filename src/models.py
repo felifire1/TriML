@@ -1,24 +1,8 @@
-"""
-ML models for TriML — injury prediction and Grit Score regression.
-
-Classification targets:
-  - injury (0/1)   : binary, predicts whether a day is an injury day
-  - load_class (0/1/2) : Undertrained / Balanced / Overreaching
-
-Regression targets:
-  - grit_score (0–100) : composite wellness score
-
-Models:
-  Classifiers : Logistic Regression, Random Forest, MLP (PyTorch)
-  Regressors  : Lasso + Polynomial features, Random Forest, MLP (PyTorch)
-
-Cross-validation:
-  GroupKFold(5) grouped by athlete_id — no athlete appears in both train and test.
-
-Evaluation:
-  Classifiers : ROC-AUC (macro OVR), F1-macro, accuracy
-  Regressors  : RMSE, MAE, R²
-"""
+# models.py - ML models for TriML project
+# CS 6140 - Spring 2026
+#
+# 3 classifiers (LR, RF, MLP) and 3 regressors (Lasso+Poly, RF, MLP)
+# using GroupKFold CV grouped by athlete_id
 
 import time
 import warnings
@@ -29,14 +13,9 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import Lasso, LogisticRegression
 from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    mean_absolute_error,
-    mean_squared_error,
-    precision_score,
-    r2_score,
-    recall_score,
-    roc_auc_score,
+    accuracy_score, f1_score, mean_absolute_error,
+    mean_squared_error, precision_score, r2_score,
+    recall_score, roc_auc_score,
 )
 from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import Pipeline
@@ -51,14 +30,15 @@ warnings.filterwarnings("ignore")
 N_FOLDS = 5
 RANDOM_STATE = 42
 
-# ---------------------------------------------------------------------------
-# PyTorch MLP
-# ---------------------------------------------------------------------------
+
+###############################################################################
+# MLP definition
+###############################################################################
 
 class MLP(nn.Module):
-    """3-hidden-layer MLP with BatchNorm and Dropout."""
+    """3 hidden layer MLP with batchnorm + dropout."""
 
-    def __init__(self, in_features: int, out_features: int, hidden: int = 128):
+    def __init__(self, in_features, out_features, hidden=128):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(in_features, hidden),
@@ -82,18 +62,9 @@ class MLP(nn.Module):
         return self.net(x)
 
 
-def _train_mlp(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    task: str,           # "binary" | "multiclass" | "regression"
-    n_classes: int = 1,
-    hidden: int = 128,
-    epochs: int = 30,
-    batch_size: int = 1024,
-    lr: float = 1e-3,
-):
-    """Train MLP and return (model, scaler)."""
+def _train_mlp(X_train, y_train, X_val, task, n_classes=1,
+               hidden=128, epochs=30, batch_size=1024, lr=1e-3):
+    """Train an MLP for the given task. Returns (model, scaler, X_val_scaled, device)."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     scaler = StandardScaler()
@@ -103,7 +74,7 @@ def _train_mlp(
     out_dim = 1 if task in ("binary", "regression") else n_classes
     model = MLP(X_tr.shape[1], out_dim, hidden=hidden).to(device)
 
-    # Class weights for imbalanced binary
+    # handle class imbalance for binary
     if task == "binary":
         pos_weight = torch.tensor(
             [(y_train == 0).sum() / max((y_train == 1).sum(), 1)],
@@ -143,33 +114,34 @@ def _train_mlp(
 
 
 def _predict_mlp(model, X_val_scaled, device, task, n_classes=1):
-    """Run inference and return (y_pred, y_proba_or_None)."""
+    """Get predictions from trained MLP."""
     with torch.no_grad():
         Xv = torch.from_numpy(X_val_scaled).to(device)
         logits = model(Xv).cpu().numpy()
 
     if task == "binary":
-        proba = 1 / (1 + np.exp(-logits.squeeze()))   # sigmoid
-        pred  = (proba >= 0.5).astype(int)
+        proba = 1 / (1 + np.exp(-logits.squeeze()))
+        pred = (proba >= 0.5).astype(int)
         return pred, proba
     elif task == "multiclass":
         from scipy.special import softmax
         proba = softmax(logits, axis=1)
-        pred  = proba.argmax(axis=1)
+        pred = proba.argmax(axis=1)
         return pred, proba
-    else:
+    else:  # regression
         return logits.squeeze(), None
 
 
-# ---------------------------------------------------------------------------
-# Cross-validation runners
-# ---------------------------------------------------------------------------
+###############################################################################
+# CV runners
+###############################################################################
 
 def _clf_metrics(y_true, y_pred, y_proba, n_classes):
-    acc  = accuracy_score(y_true, y_pred)
-    f1   = f1_score(y_true, y_pred, average="macro", zero_division=0)
+    """Compute classification metrics for one fold."""
+    acc = accuracy_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
     prec = precision_score(y_true, y_pred, average="macro", zero_division=0)
-    rec  = recall_score(y_true, y_pred, average="macro", zero_division=0)
+    rec = recall_score(y_true, y_pred, average="macro", zero_division=0)
     try:
         if n_classes == 2:
             auc = roc_auc_score(y_true, y_proba)
@@ -182,28 +154,15 @@ def _clf_metrics(y_true, y_pred, y_proba, n_classes):
 
 def _reg_metrics(y_true, y_pred):
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-    mae  = mean_absolute_error(y_true, y_pred)
-    r2   = r2_score(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
     return {"rmse": rmse, "mae": mae, "r2": r2}
 
 
-def run_classification_cv(
-    X: np.ndarray,
-    y: np.ndarray,
-    groups: np.ndarray,
-    n_classes: int = 2,
-    label: str = "injury",
-) -> dict:
+def run_classification_cv(X, y, groups, n_classes=2, label="injury"):
     """
-    Train and evaluate 3 classifiers with GroupKFold CV.
-
-    Returns:
-        {
-          "lr":  {"fold_metrics": [...], "mean": {...}, "std": {...}},
-          "rf":  {...},
-          "mlp": {...},
-          "feature_importance": pd.Series (RF, averaged across folds),
-        }
+    Train LR, RF, and MLP classifiers with GroupKFold CV.
+    Returns dict with fold metrics, mean, std, and RF feature importances.
     """
     gkf = GroupKFold(n_splits=N_FOLDS)
     task = "binary" if n_classes == 2 else "multiclass"
@@ -218,12 +177,10 @@ def run_classification_cv(
         X_tr, X_vl = X_scaled[tr_idx], X_scaled[vl_idx]
         y_tr, y_vl = y[tr_idx], y[vl_idx]
 
-        # ---------- Logistic Regression ----------
+        # --- Logistic Regression ---
         lr = LogisticRegression(
-            max_iter=1000,
-            class_weight="balanced",
-            random_state=RANDOM_STATE,
-            C=0.5,
+            max_iter=1000, class_weight="balanced",
+            random_state=RANDOM_STATE, C=0.5,
         )
         lr.fit(X_tr, y_tr)
         y_pred_lr = lr.predict(X_vl)
@@ -232,13 +189,11 @@ def run_classification_cv(
             _clf_metrics(y_vl, y_pred_lr, y_prob_lr, n_classes)
         )
 
-        # ---------- Random Forest ----------
+        # --- Random Forest ---
         rf = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=12,
+            n_estimators=200, max_depth=12,
             class_weight="balanced",
-            random_state=RANDOM_STATE,
-            n_jobs=-1,
+            random_state=RANDOM_STATE, n_jobs=-1,
         )
         rf.fit(X_tr, y_tr)
         y_pred_rf = rf.predict(X_vl)
@@ -248,7 +203,7 @@ def run_classification_cv(
         )
         rf_importances.append(rf.feature_importances_)
 
-        # ---------- MLP ----------
+        # --- MLP (PyTorch) ---
         model, _, X_vl_sc, device = _train_mlp(
             X[tr_idx], y_tr, X[vl_idx], task=task, n_classes=n_classes
         )
@@ -257,33 +212,21 @@ def run_classification_cv(
             _clf_metrics(y_vl, y_pred_mlp, y_prob_mlp, n_classes)
         )
 
-    # Aggregate across folds
+    # average across folds
     for name in ("lr", "rf", "mlp"):
         folds = results[name]["fold_metrics"]
-        keys  = folds[0].keys()
+        keys = folds[0].keys()
         results[name]["mean"] = {k: np.mean([f[k] for f in folds]) for k in keys}
-        results[name]["std"]  = {k: np.std( [f[k] for f in folds]) for k in keys}
+        results[name]["std"] = {k: np.std([f[k] for f in folds]) for k in keys}
 
     results["feature_importance"] = np.mean(rf_importances, axis=0)
     return results
 
 
-def run_regression_cv(
-    X: np.ndarray,
-    y: np.ndarray,
-    groups: np.ndarray,
-    label: str = "grit_score",
-) -> dict:
+def run_regression_cv(X, y, groups, label="grit_score"):
     """
-    Train and evaluate 3 regressors with GroupKFold CV.
-
-    Returns:
-        {
-          "lasso": {"fold_metrics": [...], "mean": {...}, "std": {...}},
-          "rf":    {...},
-          "mlp":   {...},
-          "feature_importance": np.ndarray (RF averaged across folds),
-        }
+    Train Lasso+Poly, RF, and MLP regressors with GroupKFold CV.
+    Returns dict with fold metrics, mean, std, and RF feature importances.
     """
     gkf = GroupKFold(n_splits=N_FOLDS)
 
@@ -294,70 +237,51 @@ def run_regression_cv(
         X_tr, X_vl = X[tr_idx], X[vl_idx]
         y_tr, y_vl = y[tr_idx], y[vl_idx]
 
-        # ---------- Lasso + Polynomial features ----------
+        # --- Lasso with polynomial interaction features ---
         lasso_pipe = Pipeline([
             ("scaler", StandardScaler()),
-            ("poly",   PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)),
-            ("lasso",  Lasso(alpha=0.01, max_iter=5000)),
+            ("poly", PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)),
+            ("lasso", Lasso(alpha=0.01, max_iter=5000)),
         ])
         lasso_pipe.fit(X_tr, y_tr)
         y_pred_lasso = lasso_pipe.predict(X_vl)
         results["lasso"]["fold_metrics"].append(_reg_metrics(y_vl, y_pred_lasso))
 
-        # ---------- Random Forest ----------
+        # --- Random Forest ---
         rf = RandomForestRegressor(
-            n_estimators=200,
-            max_depth=12,
-            random_state=RANDOM_STATE,
-            n_jobs=-1,
+            n_estimators=200, max_depth=12,
+            random_state=RANDOM_STATE, n_jobs=-1,
         )
         rf.fit(X_tr, y_tr)
         y_pred_rf = rf.predict(X_vl)
         results["rf"]["fold_metrics"].append(_reg_metrics(y_vl, y_pred_rf))
         rf_importances.append(rf.feature_importances_)
 
-        # ---------- MLP ----------
+        # --- MLP ---
         model, _, X_vl_sc, device = _train_mlp(
             X_tr, y_tr, X_vl, task="regression"
         )
         y_pred_mlp, _ = _predict_mlp(model, X_vl_sc, device, "regression")
         results["mlp"]["fold_metrics"].append(_reg_metrics(y_vl, y_pred_mlp))
 
-    # Aggregate
+    # average across folds
     for name in ("lasso", "rf", "mlp"):
         folds = results[name]["fold_metrics"]
-        keys  = folds[0].keys()
+        keys = folds[0].keys()
         results[name]["mean"] = {k: np.mean([f[k] for f in folds]) for k in keys}
-        results[name]["std"]  = {k: np.std( [f[k] for f in folds]) for k in keys}
+        results[name]["std"] = {k: np.std([f[k] for f in folds]) for k in keys}
 
     results["feature_importance"] = np.mean(rf_importances, axis=0)
     return results
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
+###############################################################################
+# Run everything
+###############################################################################
 
-def run_all_models(
-    X: np.ndarray,
-    y_injury: np.ndarray,
-    y_grit: np.ndarray,
-    y_load: np.ndarray,
-    groups: np.ndarray,
-    feature_names: list,
-) -> dict:
-    """
-    Run all 6 models (3 classifiers × 2 tasks + 3 regressors × 1 task)
-    and return a results dict ready for display.
+def run_all_models(X, y_injury, y_grit, y_load, groups, feature_names):
+    """Run all 9 models (3 clf tasks x 3 models each) and return results."""
 
-    Returns:
-        {
-          "injury_clf":  run_classification_cv output  (binary, target=injury),
-          "load_clf":    run_classification_cv output  (3-class, target=load_class),
-          "grit_reg":    run_regression_cv output      (target=grit_score),
-          "feature_names": List[str],
-        }
-    """
     print("Running injury classification CV...", flush=True)
     injury_clf = run_classification_cv(X, y_injury, groups, n_classes=2, label="injury")
 
@@ -368,26 +292,16 @@ def run_all_models(
     grit_reg = run_regression_cv(X, y_grit, groups, label="grit_score")
 
     return {
-        "injury_clf":    injury_clf,
-        "load_clf":      load_clf,
-        "grit_reg":      grit_reg,
+        "injury_clf": injury_clf,
+        "load_clf": load_clf,
+        "grit_reg": grit_reg,
         "feature_names": feature_names,
     }
 
 
-def results_to_dataframes(results: dict) -> dict:
-    """
-    Convert raw CV results to tidy DataFrames for display.
+def results_to_dataframes(results):
+    """Convert raw CV results into nice DataFrames for printing/display."""
 
-    Returns:
-        {
-          "clf_injury":  pd.DataFrame — classifier metrics for injury
-          "clf_load":    pd.DataFrame — classifier metrics for load class
-          "reg_grit":    pd.DataFrame — regressor metrics for grit score
-          "fi_injury":   pd.DataFrame — RF feature importances (injury clf)
-          "fi_grit":     pd.DataFrame — RF feature importances (grit reg)
-        }
-    """
     def _clf_df(res, model_labels):
         rows = []
         for key, label in model_labels:
@@ -395,11 +309,11 @@ def results_to_dataframes(results: dict) -> dict:
             s = res[key]["std"]
             rows.append({
                 "Model": label,
-                "ROC-AUC":   f"{m['roc_auc']:.3f} ± {s['roc_auc']:.3f}",
-                "F1-macro":  f"{m['f1_macro']:.3f} ± {s['f1_macro']:.3f}",
+                "ROC-AUC":  f"{m['roc_auc']:.3f} ± {s['roc_auc']:.3f}",
+                "F1-macro": f"{m['f1_macro']:.3f} ± {s['f1_macro']:.3f}",
                 "Precision": f"{m['precision']:.3f} ± {s['precision']:.3f}",
-                "Recall":    f"{m['recall']:.3f} ± {s['recall']:.3f}",
-                "Accuracy":  f"{m['accuracy']:.3f} ± {s['accuracy']:.3f}",
+                "Recall":   f"{m['recall']:.3f} ± {s['recall']:.3f}",
+                "Accuracy": f"{m['accuracy']:.3f} ± {s['accuracy']:.3f}",
                 "roc_auc_val": m["roc_auc"],
             })
         return pd.DataFrame(rows).sort_values("roc_auc_val", ascending=False).drop(columns="roc_auc_val")
@@ -427,45 +341,30 @@ def results_to_dataframes(results: dict) -> dict:
 
     return {
         "clf_injury": _clf_df(results["injury_clf"], clf_labels),
-        "clf_load":   _clf_df(results["load_clf"],   clf_labels),
-        "reg_grit":   _reg_df(results["grit_reg"],   reg_labels),
-        "fi_injury":  _fi_df(results["injury_clf"],  results["feature_names"]),
-        "fi_grit":    _fi_df(results["grit_reg"],    results["feature_names"]),
+        "clf_load":   _clf_df(results["load_clf"], clf_labels),
+        "reg_grit":   _reg_df(results["grit_reg"], reg_labels),
+        "fi_injury":  _fi_df(results["injury_clf"], results["feature_names"]),
+        "fi_grit":    _fi_df(results["grit_reg"], results["feature_names"]),
     }
 
 
-# ---------------------------------------------------------------------------
-# Hyperparameter sweep (course requirement: investigate effect of HPs)
-# ---------------------------------------------------------------------------
+###############################################################################
+# Hyperparameter sweep
+# (course requirement: investigate effect of hyperparameters via CV)
+###############################################################################
 
-def hyperparameter_sweep(
-    X: np.ndarray,
-    y_clf: np.ndarray,
-    y_reg: np.ndarray,
-    groups: np.ndarray,
-    n_classes: int = 3,
-) -> dict:
+def hyperparameter_sweep(X, y_clf, y_reg, groups, n_classes=3):
     """
-    Sweep key hyperparameters for each model and return mean CV metric vs HP value.
-    Uses 3-fold GroupKFold for speed.
-
-    Sweeps:
-      LR  classifier  : C (regularization strength) over [0.001, 0.01, 0.1, 0.5, 1, 5, 10]
-      RF  classifier  : max_depth over [3, 5, 8, 12, 16, None]
-      DNN classifier  : hidden layer size over [32, 64, 128, 256]
-      Lasso regressor : alpha over [0.001, 0.01, 0.1, 0.5, 1.0, 5.0]
-      RF  regressor   : max_depth over [3, 5, 8, 12, 16, None]
-      DNN regressor   : hidden layer size over [32, 64, 128, 256]
-
-    Returns:
-        dict of DataFrames, one per model, columns = [hp_name, hp_value, mean_metric, std_metric]
+    Sweep one key HP per model, report mean CV metric vs HP value.
+    Uses 3-fold GroupKFold to keep it fast.
     """
     gkf3 = GroupKFold(n_splits=3)
     scaler = StandardScaler()
     X_sc = scaler.fit_transform(X)
     task_clf = "binary" if n_classes == 2 else "multiclass"
 
-    def _cv_score_clf(model_fn, metric="roc_auc"):
+    # helper: classification CV score for sklearn models
+    def _cv_score_clf(model_fn):
         scores = []
         for tr, vl in gkf3.split(X, y_clf, groups):
             m = model_fn()
@@ -475,14 +374,15 @@ def hyperparameter_sweep(
                 proba = proba[:, 1]
             try:
                 s = roc_auc_score(y_clf[vl], proba,
-                                   multi_class="ovr" if n_classes > 2 else "raise",
-                                   average="macro" if n_classes > 2 else None)
+                                  multi_class="ovr" if n_classes > 2 else "raise",
+                                  average="macro" if n_classes > 2 else None)
             except Exception:
                 s = np.nan
             scores.append(s)
         return np.nanmean(scores), np.nanstd(scores)
 
-    def _cv_score_reg(model_fn, metric="r2"):
+    # helper: regression CV score for sklearn models
+    def _cv_score_reg(model_fn):
         scores = []
         for tr, vl in gkf3.split(X, y_reg, groups):
             m = model_fn()
@@ -491,12 +391,13 @@ def hyperparameter_sweep(
             scores.append(r2_score(y_reg[vl], pred))
         return np.nanmean(scores), np.nanstd(scores)
 
+    # lasso needs its own pipeline
     def _cv_score_lasso(alpha):
         scores = []
         for tr, vl in gkf3.split(X, y_reg, groups):
             pipe = Pipeline([
-                ("sc",    StandardScaler()),
-                ("poly",  PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)),
+                ("sc", StandardScaler()),
+                ("poly", PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)),
                 ("lasso", Lasso(alpha=alpha, max_iter=5000)),
             ])
             pipe.fit(X[tr], y_reg[tr])
@@ -512,15 +413,11 @@ def hyperparameter_sweep(
             )
             _, proba = _predict_mlp(model, X_vl_sc, device, task_clf, n_classes)
             if n_classes == 2:
-                try:
-                    s = roc_auc_score(y_clf[vl], proba)
-                except Exception:
-                    s = np.nan
+                try: s = roc_auc_score(y_clf[vl], proba)
+                except: s = np.nan
             else:
-                try:
-                    s = roc_auc_score(y_clf[vl], proba, multi_class="ovr", average="macro")
-                except Exception:
-                    s = np.nan
+                try: s = roc_auc_score(y_clf[vl], proba, multi_class="ovr", average="macro")
+                except: s = np.nan
             scores.append(s)
         return np.nanmean(scores), np.nanstd(scores)
 
@@ -537,7 +434,7 @@ def hyperparameter_sweep(
 
     results = {}
 
-    # --- LR: C ---
+    # LR: regularization strength C
     print("  HP sweep: LR C...", flush=True)
     C_vals = [0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 10.0]
     rows = []
@@ -550,7 +447,7 @@ def hyperparameter_sweep(
         rows.append({"C": c, "mean_auc": mu, "std_auc": sd})
     results["lr_C"] = pd.DataFrame(rows)
 
-    # --- RF clf: max_depth ---
+    # RF classifier: max_depth
     print("  HP sweep: RF classifier max_depth...", flush=True)
     depths = [3, 5, 8, 12, 16, 20]
     rows = []
@@ -563,7 +460,7 @@ def hyperparameter_sweep(
         rows.append({"max_depth": d, "mean_auc": mu, "std_auc": sd})
     results["rf_clf_depth"] = pd.DataFrame(rows)
 
-    # --- DNN clf: hidden size ---
+    # DNN classifier: hidden layer size
     print("  HP sweep: DNN classifier hidden size...", flush=True)
     hidden_sizes = [32, 64, 128, 256]
     rows = []
@@ -572,7 +469,7 @@ def hyperparameter_sweep(
         rows.append({"hidden_size": h, "mean_auc": mu, "std_auc": sd})
     results["dnn_clf_hidden"] = pd.DataFrame(rows)
 
-    # --- Lasso: alpha ---
+    # Lasso: alpha
     print("  HP sweep: Lasso alpha...", flush=True)
     alphas = [0.001, 0.01, 0.1, 0.5, 1.0, 5.0]
     rows = []
@@ -581,7 +478,7 @@ def hyperparameter_sweep(
         rows.append({"alpha": a, "mean_r2": mu, "std_r2": sd})
     results["lasso_alpha"] = pd.DataFrame(rows)
 
-    # --- RF reg: max_depth ---
+    # RF regressor: max_depth
     print("  HP sweep: RF regressor max_depth...", flush=True)
     rows = []
     for d in depths:
@@ -592,7 +489,7 @@ def hyperparameter_sweep(
         rows.append({"max_depth": d, "mean_r2": mu, "std_r2": sd})
     results["rf_reg_depth"] = pd.DataFrame(rows)
 
-    # --- DNN reg: hidden size ---
+    # DNN regressor: hidden layer size
     print("  HP sweep: DNN regressor hidden size...", flush=True)
     rows = []
     for h in hidden_sizes:
