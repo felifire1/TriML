@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# FutureSteps: generate_report.py
 """
 Generate the TriML Final Report as a .docx file using python-docx.
 CS 6140: Machine Learning — Northeastern University
@@ -12,16 +13,12 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
-# ---------------------------------------------------------------------------
 # Paths
-# ---------------------------------------------------------------------------
 BASE = os.path.dirname(os.path.abspath(__file__))
 PLOTS = os.path.join(BASE, "results", "plots")
 OUT = os.path.join(BASE, "TriML_Final_Report.docx")
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def set_cell_shading(cell, color_hex):
     """Set background shading on a table cell."""
@@ -107,9 +104,7 @@ def heading(doc, text, level=1):
     return h
 
 
-# ---------------------------------------------------------------------------
 # Build Document
-# ---------------------------------------------------------------------------
 doc = Document()
 
 # -- Default font --
@@ -613,8 +608,6 @@ for ref in refs:
         run.font.size = Pt(10)
         run.font.name = "Times New Roman"
 
-# ---------------------------------------------------------------------------
 # Save
-# ---------------------------------------------------------------------------
 doc.save(OUT)
 print(f"Report saved to {OUT}")

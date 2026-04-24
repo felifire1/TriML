@@ -1,3 +1,4 @@
+# FutureSteps: garmin_mapper.py
 """
 Garmin data → TriML feature schema mapper.
 
@@ -16,16 +17,12 @@ from pathlib import Path
 from typing import Optional
 
 
-# ---------------------------------------------------------------------------
 # Config
-# ---------------------------------------------------------------------------
 
 GARMIN_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "garmin"
 
 
-# ---------------------------------------------------------------------------
 # Loaders — one per Garmin CSV
-# ---------------------------------------------------------------------------
 
 def _load_daily_summary(data_dir: Path) -> pd.DataFrame:
     df = pd.read_csv(data_dir / "daily_summary.csv", parse_dates=["date"])
@@ -116,9 +113,7 @@ def _load_body_battery(data_dir: Path) -> pd.DataFrame:
     })
 
 
-# ---------------------------------------------------------------------------
 # Rolling feature computation (mirrors src/features.py logic)
-# ---------------------------------------------------------------------------
 
 def _rolling_slope(series: pd.Series, window: int = 7) -> pd.Series:
     """Linear slope over a rolling window (units per day)."""
@@ -201,9 +196,7 @@ def compute_grit_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ---------------------------------------------------------------------------
 # Main mapper
-# ---------------------------------------------------------------------------
 
 def build_personal_dataset(data_dir: Optional[Path] = None) -> pd.DataFrame:
     """
@@ -284,9 +277,7 @@ def build_personal_dataset(data_dir: Optional[Path] = None) -> pd.DataFrame:
     return df
 
 
-# ---------------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     df = build_personal_dataset()

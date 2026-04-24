@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# FutureSteps: garmin_download.py
 """
 Garmin Connect data downloader for TriML project.
 
@@ -20,9 +21,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def date_range(start: date, end: date):
     """Yield each date from start through end (inclusive)."""
@@ -62,9 +61,7 @@ def print_progress(current: int, total: int, label: str = ""):
     print(f"\r[{bar}] {current}/{total} ({pct}%) {label}   ", end="", flush=True)
 
 
-# ---------------------------------------------------------------------------
 # Authentication
-# ---------------------------------------------------------------------------
 
 TOKEN_DIR = Path.home() / ".garmin_tokens"
 
@@ -135,9 +132,7 @@ def get_authenticated_client():
     return client
 
 
-# ---------------------------------------------------------------------------
 # Download helpers – one per data type
-# ---------------------------------------------------------------------------
 
 def download_daily_summary(client, dates, out_path: Path):
     """Download daily summary stats."""
@@ -386,9 +381,7 @@ def download_body_battery(client, dates, out_path: Path):
     return len(rows)
 
 
-# ---------------------------------------------------------------------------
 # CSV writer
-# ---------------------------------------------------------------------------
 
 def _write_csv(path: Path, fieldnames: list, rows: list):
     ensure_dir(path.parent)
@@ -399,9 +392,7 @@ def _write_csv(path: Path, fieldnames: list, rows: list):
     print(f"  Saved {len(rows)} rows → {path}")
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 
 def parse_args():
     parser = argparse.ArgumentParser(

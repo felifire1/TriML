@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# FutureSteps: whoop_download.py
 """
 WHOOP API data downloader for TriML project.
 
@@ -24,9 +25,7 @@ from pathlib import Path
 
 import requests
 
-# ---------------------------------------------------------------------------
 # WHOOP API config
-# ---------------------------------------------------------------------------
 AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
 TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
 API_BASE = "https://api.prod.whoop.com/developer"
@@ -37,9 +36,7 @@ TOKEN_DIR = Path.home() / ".whoop_tokens"
 TOKEN_FILE = TOKEN_DIR / "tokens.json"
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -67,9 +64,7 @@ def _write_csv(path, fieldnames, rows):
     print(f"  Saved {len(rows)} rows -> {path}")
 
 
-# ---------------------------------------------------------------------------
 # OAuth2 flow
-# ---------------------------------------------------------------------------
 
 def get_auth_code(client_id):
     """Open browser for WHOOP login and capture the auth code via localhost."""
@@ -172,9 +167,7 @@ def authenticate():
     return tokens["access_token"], client_id, client_secret
 
 
-# ---------------------------------------------------------------------------
 # API helpers
-# ---------------------------------------------------------------------------
 
 def api_get(endpoint, access_token, params=None):
     """Authenticated GET with retry on 429."""
@@ -220,9 +213,7 @@ def fetch_all_pages(endpoint, access_token, start_iso, end_iso):
     return all_records
 
 
-# ---------------------------------------------------------------------------
 # Extract date helper
-# ---------------------------------------------------------------------------
 
 def extract_date(record):
     """Pull a YYYY-MM-DD date from various WHOOP timestamp fields."""
@@ -233,9 +224,7 @@ def extract_date(record):
     return None
 
 
-# ---------------------------------------------------------------------------
 # Download + CSV writers per data type
-# ---------------------------------------------------------------------------
 
 def download_recovery(records, out_path):
     fieldnames = [
@@ -330,9 +319,7 @@ def download_cycles(records, out_path):
     return len(rows)
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 
 def parse_args():
     parser = argparse.ArgumentParser(

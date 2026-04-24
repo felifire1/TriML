@@ -1,3 +1,4 @@
+# FutureSteps: tss_estimator.py
 """
 TSS (Training Stress Score) estimator for real Garmin data.
 
@@ -18,9 +19,7 @@ import pandas as pd
 from typing import Optional
 
 
-# ---------------------------------------------------------------------------
 # Default athlete thresholds (can be overridden per-athlete)
-# ---------------------------------------------------------------------------
 
 DEFAULT_FTP = 275       # watts — Felipe's actual bike FTP
 DEFAULT_LTHR = 176      # bpm — estimated 88% of 200 max HR
@@ -42,9 +41,7 @@ DURATION_TSS_PER_HOUR = {
 }
 
 
-# ---------------------------------------------------------------------------
 # TSS calculation methods
-# ---------------------------------------------------------------------------
 
 def power_tss(duration_sec: float, avg_power: float, ftp: float) -> float:
     """
@@ -146,9 +143,7 @@ def swim_tss(duration_sec: float, distance_m: float, avg_hr: float,
     return duration_tss(duration_sec, "lap_swimming")
 
 
-# ---------------------------------------------------------------------------
 # Sport classification (map Garmin activity types → canonical sports)
-# ---------------------------------------------------------------------------
 
 SPORT_MAP = {
     # Cycling
@@ -179,9 +174,7 @@ SPORT_MAP = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Main estimator
-# ---------------------------------------------------------------------------
 
 def estimate_tss(
     row: pd.Series,
@@ -283,9 +276,7 @@ def estimate_all_tss(
     return df
 
 
-# ---------------------------------------------------------------------------
 # Quick test / summary
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import sys

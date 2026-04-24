@@ -1,4 +1,4 @@
-# TriML — Lovable Build Prompt
+# FutureSteps: Lovable Build Prompt
 
 ## Project Overview
 
