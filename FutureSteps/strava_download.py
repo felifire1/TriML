@@ -214,62 +214,71 @@ def fetch_activities(access_token, start_date, end_date):
     return all_activities
 
 
-# Load WHOOP + Garmin data into date-keyed dicts
+# Load ML daily features via garmin_mapper
 
-def _load_whoop_recovery():
-    path = DATA_DIR / "whoop" / "recovery.csv"
-    if not path.exists():
+def _load_ml_daily():
+    """Run garmin_mapper to get Grit Score + rolling features per day."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from FutureSteps.garmin_mapper import build_personal_dataset
+        df = build_personal_dataset()
+        df["date_str"] = df["date"].astype(str).str[:10]
+        return df.set_index("date_str").to_dict("index")
+    except Exception as exc:
+        print(f"  Warning: could not load garmin_mapper ({exc})")
         return {}
-    import csv
-    data = {}
-    with open(path) as f:
-        for row in csv.DictReader(f):
-            d = row.get("date", "")[:10]
-            if d:
-                data[d] = row
-    return data
 
 
-def _load_whoop_sleep():
-    path = DATA_DIR / "whoop" / "sleep.csv"
-    if not path.exists():
-        return {}
-    import csv
-    data = {}
-    with open(path) as f:
-        for row in csv.DictReader(f):
-            d = row.get("date", "")[:10]
-            if d:
-                data[d] = row
-    return data
+def _load_injury_model():
+    """Load trained injury + load models from results/trained_models.pkl."""
+    model_path = DATA_DIR.parent / "results" / "trained_models.pkl"
+    if not model_path.exists():
+        return None
+    try:
+        import pickle
+        with open(model_path, "rb") as f:
+            return pickle.load(f)
+    except Exception as exc:
+        print(f"  Warning: could not load trained models ({exc})")
+        return None
 
 
-def _load_garmin_daily():
-    path = DATA_DIR / "garmin" / "daily_summary.csv"
-    if not path.exists():
-        return {}
-    import csv
-    data = {}
-    with open(path) as f:
-        for row in csv.DictReader(f):
-            d = row.get("date", "")[:10]
-            if d:
-                data[d] = row
-    return data
+def _athlete_profile_features():
+    """Read athlete profile from .env for injury model input."""
+    gender_enc = 0 if os.environ.get("ATHLETE_GENDER", "male").lower() == "male" else 1
+    lifestyle_map = {"recreational": 0, "amateur": 1, "professional": 2}
+    lifestyle_enc = lifestyle_map.get(os.environ.get("ATHLETE_LIFESTYLE", "amateur").lower(), 1)
+    return {
+        "age": float(os.environ.get("ATHLETE_AGE") or 28),
+        "vo2max": float(os.environ.get("ATHLETE_VO2MAX") or 52),
+        "ftp": float(os.environ.get("ATHLETE_FTP") or 220),
+        "training_experience": float(os.environ.get("ATHLETE_TRAINING_EXPERIENCE_YEARS") or 3),
+        "weekly_training_hours": float(os.environ.get("ATHLETE_WEEKLY_HOURS") or 10),
+        "gender_enc": gender_enc,
+        "lifestyle_enc": lifestyle_enc,
+    }
 
 
-def _load_garmin_hrv():
-    path = DATA_DIR / "garmin" / "hrv.csv"
-    if not path.exists():
-        return {}
-    import csv
-    data = {}
-    with open(path) as f:
-        for row in csv.DictReader(f):
-            d = row.get("date", "")[:10]
-            if d:
-                data[d] = row
-    return data
+def _predict_injury(row, models):
+    """Run injury + load prediction for a single day's feature row."""
+    import numpy as np
+
+    feat_names = models["feature_names"]
+    profile = _athlete_profile_features()
+
+    feat_vec = []
+    for f in feat_names:
+        val = row.get(f, profile.get(f, 0))
+        try:
+            feat_vec.append(float(val) if val is not None else 0.0)
+        except (TypeError, ValueError):
+            feat_vec.append(0.0)
+
+    X = models["scaler"].transform([feat_vec])
+    injury_prob = models["injury_clf"].predict_proba(X)[0][1]  # P(injured)
+    load_pred = models["load_clf"].predict(X)[0]
+    load_label = models["load_classes"][int(load_pred)]
+    return injury_prob, load_label
 
 
 # Format the comment
@@ -284,61 +293,47 @@ def _fmt(val, decimals=0, suffix=""):
         return "—"
 
 
-def _ms_to_hours(val):
-    try:
-        return float(val) / 3_600_000
-    except (TypeError, ValueError):
+LOAD_EMOJI = {"Overreaching": "🔴", "Balanced": "🟢", "Undertrained": "🟡"}
+
+
+def build_comment(act_date, ml_daily, models):
+    row = ml_daily.get(act_date)
+    if not row:
         return None
 
+    grit = row.get("grit_score")
+    acwr = row.get("acwr")
+    hrv_z = row.get("hrv_zscore")
+    load_class = row.get("load_class", "Balanced")
 
-def build_comment(act_date, whoop_rec, whoop_sleep, garmin_daily, garmin_hrv):
-    rec = whoop_rec.get(act_date, {})
-    slp = whoop_sleep.get(act_date, {})
-    grm = garmin_daily.get(act_date, {})
-    hrv = garmin_hrv.get(act_date, {})
+    lines = ["📊 TriML"]
 
-    lines = ["📊 TriML Stats"]
+    # Injury prediction (if models loaded)
+    if models:
+        try:
+            injury_prob, load_pred = _predict_injury(row, models)
+            emoji = "🔴" if injury_prob > 0.5 else "🟡" if injury_prob > 0.25 else "🟢"
+            lines.append(f"Injury Risk: {injury_prob*100:.0f}% {emoji}  ·  Load: {load_pred} {LOAD_EMOJI.get(load_pred, '')}")
+        except Exception:
+            pass
 
-    # WHOOP recovery
-    recovery = rec.get("recovery_score")
-    hrv_whoop = rec.get("hrv_rmssd")
-    sleep_ms = slp.get("total_sleep_ms")
-    sleep_h = _ms_to_hours(sleep_ms)
-    sleep_perf = slp.get("sleep_performance")
+    # Grit Score
+    if grit is not None:
+        load_emoji = LOAD_EMOJI.get(load_class, "")
+        lines.append(f"Grit Score: {_fmt(grit)}/100  ·  {load_class} {load_emoji}")
 
-    if any(v not in (None, "", "None") for v in [recovery, hrv_whoop, sleep_h]):
-        parts = []
-        if recovery not in (None, "", "None"):
-            parts.append(f"Recovery: {_fmt(recovery)}%")
-        if hrv_whoop not in (None, "", "None"):
-            parts.append(f"HRV: {_fmt(hrv_whoop)}ms")
-        if sleep_h is not None:
-            parts.append(f"Sleep: {_fmt(sleep_h, 1)}h")
-        if sleep_perf not in (None, "", "None"):
-            parts.append(f"Sleep perf: {_fmt(sleep_perf)}%")
-        lines.append(" · ".join(parts))
-
-    # Garmin daily
-    rhr = grm.get("resting_hr")
-    stress = grm.get("avg_stress")
-    bb_high = grm.get("body_battery_high")
-    bb_low = grm.get("body_battery_low")
-    hrv_garmin = hrv.get("hrv_last_night") or hrv.get("hrv_weekly_avg")
-
-    if any(v not in (None, "", "None") for v in [rhr, stress, bb_high, hrv_garmin]):
-        parts = []
-        if rhr not in (None, "", "None"):
-            parts.append(f"RHR: {_fmt(rhr)}bpm")
-        if hrv_garmin not in (None, "", "None"):
-            parts.append(f"HRV: {_fmt(hrv_garmin)}ms")
-        if bb_high not in (None, "", "None") and bb_low not in (None, "", "None"):
-            parts.append(f"Battery: {_fmt(bb_low)}→{_fmt(bb_high)}")
-        if stress not in (None, "", "None"):
-            parts.append(f"Stress: {_fmt(stress)}")
-        lines.append(" · ".join(parts))
+    # ACWR + HRV trend
+    details = []
+    if acwr is not None:
+        details.append(f"ACWR: {_fmt(acwr, 2)}")
+    if hrv_z is not None:
+        sign = "+" if float(hrv_z) >= 0 else ""
+        details.append(f"HRV: {sign}{_fmt(hrv_z, 1)}σ")
+    if details:
+        lines.append("  ".join(details))
 
     if len(lines) == 1:
-        return None  # no data for this date
+        return None
 
     return "\n".join(lines)
 
@@ -346,7 +341,7 @@ def build_comment(act_date, whoop_rec, whoop_sleep, garmin_daily, garmin_hrv):
 # Main
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Post TriML stats as comments on Strava activities.")
+    parser = argparse.ArgumentParser(description="Post TriML ML stats as comments on Strava activities.")
     parser.add_argument("--start", default="2025-01-01")
     parser.add_argument("--end", default=date.today().isoformat())
     parser.add_argument("--dry-run", action="store_true", help="Print comments without posting")
@@ -363,21 +358,19 @@ def main():
 
     access_token, _, _ = authenticate()
 
-    print("\nLoading WHOOP + Garmin data...")
-    whoop_rec = _load_whoop_recovery()
-    whoop_sleep = _load_whoop_sleep()
-    garmin_daily = _load_garmin_daily()
-    garmin_hrv = _load_garmin_hrv()
-
-    sources = []
-    if whoop_rec:
-        sources.append(f"WHOOP recovery ({len(whoop_rec)} days)")
-    if garmin_daily:
-        sources.append(f"Garmin daily ({len(garmin_daily)} days)")
-    if not sources:
-        print("  No WHOOP or Garmin data found. Run those downloaders first.")
+    print("\nLoading ML daily features from Garmin data...")
+    ml_daily = _load_ml_daily()
+    if not ml_daily:
+        print("  No Garmin data found. Run garmin_download.py first.")
         sys.exit(1)
-    print(f"  Loaded: {', '.join(sources)}")
+    print(f"  {len(ml_daily)} days loaded.")
+
+    models = _load_injury_model()
+    if models:
+        print("  Trained injury model loaded — will predict injury risk.")
+    else:
+        print("  No trained models found — run ml_pipeline.py first for injury prediction.")
+        print("  (Grit Score + ACWR will still be posted.)")
 
     activities = fetch_activities(access_token, args.start, args.end)
 
@@ -394,7 +387,7 @@ def main():
         if not act_date or not act_id:
             continue
 
-        comment = build_comment(act_date, whoop_rec, whoop_sleep, garmin_daily, garmin_hrv)
+        comment = build_comment(act_date, ml_daily, models)
 
         if not comment:
             skipped += 1

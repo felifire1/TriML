@@ -23,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -164,7 +166,7 @@ def run(data_dir, results_dir, sample_n=None, tune=False):
         raw_results["grit_reg"]["feature_importance"], feat_names, "Grit Score"
     )
 
-    # save
+    # save CV results
     out_path = results_dir / "ml_results.pkl"
     payload = {
         "raw": raw_results,
@@ -174,6 +176,32 @@ def run(data_dir, results_dir, sample_n=None, tune=False):
     }
     with open(out_path, "wb") as f:
         pickle.dump(payload, f)
+
+    # train final models on all data for personal inference
+    print("\n  Training final models on full dataset for inference...")
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    injury_model = RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1)
+    injury_model.fit(X_scaled, y_injury)
+
+    grit_model = RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1)
+    grit_model.fit(X_scaled, y_grit)
+
+    load_model = RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1)
+    load_model.fit(X_scaled, y_load)
+
+    models_path = results_dir / "trained_models.pkl"
+    with open(models_path, "wb") as f:
+        pickle.dump({
+            "injury_clf": injury_model,
+            "grit_reg": grit_model,
+            "load_clf": load_model,
+            "scaler": scaler,
+            "feature_names": feat_names,
+            "load_classes": LOAD_CLASSES,
+        }, f)
+    print(f"  Final models saved to {models_path}")
 
     # optional HP sweep
     if tune:
