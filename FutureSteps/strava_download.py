@@ -243,8 +243,57 @@ def _load_injury_model():
         return None
 
 
-def _athlete_profile_features():
-    """Read athlete profile from .env for injury model input."""
+def _compute_rolling_weekly_hours():
+    """Compute a 4-week rolling avg of weekly training hours from Garmin activities."""
+    import csv
+    path = DATA_DIR / "garmin" / "activities.csv"
+    if not path.exists():
+        return {}
+    try:
+        from datetime import timedelta
+        import collections
+        # sum duration_seconds per day
+        daily_seconds = collections.defaultdict(float)
+        with open(path) as f:
+            for row in csv.DictReader(f):
+                d = (row.get("date") or "")[:10]
+                try:
+                    daily_seconds[d] += float(row.get("duration_seconds") or 0)
+                except ValueError:
+                    pass
+
+        # for each date, compute avg weekly hours over trailing 4 weeks
+        rolling = {}
+        dates = sorted(daily_seconds.keys())
+        from datetime import date as date_cls
+        for d_str in dates:
+            d = date_cls.fromisoformat(d_str)
+            window_start = (d - timedelta(weeks=4)).isoformat()
+            total_sec = sum(
+                v for k, v in daily_seconds.items()
+                if window_start <= k <= d_str
+            )
+            rolling[d_str] = (total_sec / 3600) / 4  # avg hours/week over 4 weeks
+        return rolling
+    except Exception:
+        return {}
+
+
+# precompute once at module load
+_WEEKLY_HOURS_BY_DATE = None
+
+
+def _get_weekly_hours(act_date):
+    global _WEEKLY_HOURS_BY_DATE
+    if _WEEKLY_HOURS_BY_DATE is None:
+        _WEEKLY_HOURS_BY_DATE = _compute_rolling_weekly_hours()
+    # fall back to .env value or 10h if no Garmin data
+    fallback = float(os.environ.get("ATHLETE_WEEKLY_HOURS") or 10)
+    return _WEEKLY_HOURS_BY_DATE.get(act_date, fallback)
+
+
+def _athlete_profile_features(act_date=None):
+    """Static profile from .env + dynamic weekly hours from Garmin activities."""
     gender_enc = 0 if os.environ.get("ATHLETE_GENDER", "male").lower() == "male" else 1
     lifestyle_map = {"recreational": 0, "amateur": 1, "professional": 2}
     lifestyle_enc = lifestyle_map.get(os.environ.get("ATHLETE_LIFESTYLE", "amateur").lower(), 1)
@@ -253,18 +302,18 @@ def _athlete_profile_features():
         "vo2max": float(os.environ.get("ATHLETE_VO2MAX") or 52),
         "ftp": float(os.environ.get("ATHLETE_FTP") or 220),
         "training_experience": float(os.environ.get("ATHLETE_TRAINING_EXPERIENCE_YEARS") or 3),
-        "weekly_training_hours": float(os.environ.get("ATHLETE_WEEKLY_HOURS") or 10),
+        "weekly_training_hours": _get_weekly_hours(act_date),
         "gender_enc": gender_enc,
         "lifestyle_enc": lifestyle_enc,
     }
 
 
-def _predict_injury(row, models):
+def _predict_injury(row, models, act_date=None):
     """Run injury + load prediction for a single day's feature row."""
     import numpy as np
 
     feat_names = models["feature_names"]
-    profile = _athlete_profile_features()
+    profile = _athlete_profile_features(act_date)
 
     feat_vec = []
     for f in feat_names:
@@ -311,7 +360,7 @@ def build_comment(act_date, ml_daily, models):
     # Injury prediction (if models loaded)
     if models:
         try:
-            injury_prob, load_pred = _predict_injury(row, models)
+            injury_prob, load_pred = _predict_injury(row, models, act_date)
             emoji = "🔴" if injury_prob > 0.5 else "🟡" if injury_prob > 0.25 else "🟢"
             lines.append(f"Injury Risk: {injury_prob*100:.0f}% {emoji}  ·  Load: {load_pred} {LOAD_EMOJI.get(load_pred, '')}")
         except Exception:
