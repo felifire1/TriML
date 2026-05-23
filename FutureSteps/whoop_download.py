@@ -13,9 +13,9 @@ Usage:
 
 import argparse
 import csv
-import getpass
 import http.server
 import json
+import os
 import sys
 import time
 import urllib.parse
@@ -24,6 +24,19 @@ from datetime import date
 from pathlib import Path
 
 import requests
+
+
+def _load_env():
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), val.strip())
+
+_load_env()
 
 # WHOOP API config
 AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
@@ -142,10 +155,14 @@ def refresh_access_token(client_id, client_secret, refresh_token):
 
 def authenticate():
     """Full auth flow: try saved tokens -> refresh -> full OAuth2."""
+    client_id = os.environ.get("WHOOP_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("WHOOP_CLIENT_SECRET", "").strip()
+
+    if not client_id or not client_secret:
+        print("ERROR: WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET must be set in .env")
+        sys.exit(1)
+
     print("\nWHOOP Authentication")
-    print("--------------------")
-    client_id = input("Client ID: ").strip()
-    client_secret = getpass.getpass("Client Secret: ")
 
     tokens = load_tokens()
 

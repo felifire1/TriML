@@ -13,12 +13,24 @@ Usage:
 
 import argparse
 import csv
-import getpass
 import os
 import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
+
+
+def _load_env():
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), val.strip())
+
+_load_env()
 
 
 # Helpers
@@ -91,14 +103,18 @@ def load_client_with_tokens():
 
 
 def login_with_credentials():
-    """Prompt for credentials, log in with retry/backoff, save tokens, return client."""
+    """Log in using credentials from .env, with retry/backoff, save tokens, return client."""
     from garminconnect import Garmin
     import garth
 
-    print("\nGarmin Connect login")
-    print("--------------------")
-    email = input("Email: ").strip()
-    password = getpass.getpass("Password: ")
+    email = os.environ.get("GARMIN_EMAIL", "").strip()
+    password = os.environ.get("GARMIN_PASSWORD", "").strip()
+
+    if not email or not password:
+        print("ERROR: GARMIN_EMAIL and GARMIN_PASSWORD must be set in .env")
+        sys.exit(1)
+
+    print(f"\nLogging in to Garmin Connect as {email}...")
 
     client = Garmin(email, password)
 
