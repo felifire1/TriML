@@ -345,7 +345,53 @@ def _fmt(val, decimals=0, suffix=""):
 LOAD_EMOJI = {"Overreaching": "🔴", "Balanced": "🟢", "Undertrained": "🟡"}
 
 
-def build_comment(act_date, ml_daily, models):
+def _activity_line(act):
+    """Build a workout-specific line from the Strava activity object."""
+    sport = (act.get("sport_type") or act.get("type") or "").lower()
+    parts = []
+
+    dist_m = act.get("distance")
+    duration_s = act.get("moving_time") or act.get("elapsed_time")
+    avg_hr = act.get("average_heartrate")
+    max_hr = act.get("max_heartrate")
+    avg_watts = act.get("average_watts")
+    w_avg_watts = act.get("weighted_average_watts")
+    elevation = act.get("total_elevation_gain")
+
+    # Distance
+    if dist_m:
+        if "swim" in sport:
+            parts.append(f"{dist_m:.0f}m")
+        elif dist_m >= 1000:
+            parts.append(f"{dist_m/1000:.1f}km")
+
+    # Pace (run) or Power (bike)
+    if duration_s and dist_m and dist_m > 0:
+        if any(x in sport for x in ["run", "walk", "hike"]):
+            pace_sec_km = duration_s / (dist_m / 1000)
+            mins = int(pace_sec_km // 60)
+            secs = int(pace_sec_km % 60)
+            parts.append(f"{mins}:{secs:02d}/km")
+        elif any(x in sport for x in ["ride", "cycl", "bike", "virtual"]):
+            if w_avg_watts:
+                parts.append(f"{w_avg_watts:.0f}w NP")
+            elif avg_watts:
+                parts.append(f"{avg_watts:.0f}w avg")
+
+    # HR
+    if avg_hr:
+        parts.append(f"{avg_hr:.0f}bpm avg")
+    if max_hr:
+        parts.append(f"{max_hr:.0f} max")
+
+    # Elevation for rides/runs
+    if elevation and elevation > 10:
+        parts.append(f"+{elevation:.0f}m")
+
+    return "  ·  ".join(parts) if parts else None
+
+
+def build_comment(act_date, ml_daily, models, act=None):
     row = ml_daily.get(act_date)
     if not row:
         return None
@@ -356,6 +402,12 @@ def build_comment(act_date, ml_daily, models):
     load_class = row.get("load_class", "Balanced")
 
     lines = ["📊 TriML"]
+
+    # Activity-specific line (makes each workout unique)
+    if act:
+        act_line = _activity_line(act)
+        if act_line:
+            lines.append(act_line)
 
     # Injury prediction (if models loaded)
     if models:
@@ -436,7 +488,7 @@ def main():
         if not act_date or not act_id:
             continue
 
-        comment = build_comment(act_date, ml_daily, models)
+        comment = build_comment(act_date, ml_daily, models, act=act)
 
         if not comment:
             skipped += 1
