@@ -308,23 +308,65 @@ def _athlete_profile_features(act_date=None):
     }
 
 
-def _predict_injury(row, models, act_date=None):
-    """Run injury + load prediction for a single day's feature row."""
+def _predict_injury(row, models, act_date=None, cumulative_fraction=1.0):
+    """
+    Run injury + load prediction for a single day's feature row.
+
+    cumulative_fraction (0-1) scales the load-sensitive features (TSS,
+    duration, ACWR) to reflect how far into the day's training we are.
+    ACWR moves less than TSS because it's a 7-day rolling mean — today's
+    partial load only nudges the numerator slightly.
+    """
     import numpy as np
 
     feat_names = models["feature_names"]
     profile = _athlete_profile_features(act_date)
 
+    # features that build up through the day
+    load_features = {"tss", "duration_minutes"}
+
+    # ACWR is a 7-day rolling mean, so today's partial load only moves it
+    # by 1/7 of the day's contribution — much smaller effect
+    acwr_end = row.get("acwr")
+    chronic = None
+    if acwr_end is not None:
+        try:
+            # approximate chronic from end-of-day acwr and tss
+            tss_end = float(row.get("tss") or 0)
+            acwr_f = float(acwr_end)
+            # acute_end ≈ acwr * chronic, and acute includes today fully
+            # partial acute = acute_end - tss_end/7 + (tss_end * fraction)/7
+            # partial_acwr = partial_acute / chronic = acwr_end + (fraction-1) * tss_end / (7 * chronic)
+            # we can express this without knowing chronic:
+            # partial_acwr ≈ acwr_end * (1 - (1 - fraction) * tss_end / (7 * acwr_end * chronic))
+            # simplify: just linearly blend acwr toward 1.0 (no load) as fraction decreases
+            # acwr_partial = 1.0 + (acwr_end - 1.0) * fraction  (1.0 = no-load baseline)
+            acwr_partial = 1.0 + (acwr_f - 1.0) * cumulative_fraction
+        except (TypeError, ValueError):
+            acwr_partial = acwr_end
+    else:
+        acwr_partial = acwr_end
+
     feat_vec = []
     for f in feat_names:
         val = row.get(f, profile.get(f, 0))
         try:
-            feat_vec.append(float(val) if val is not None else 0.0)
+            v = float(val) if val is not None else 0.0
         except (TypeError, ValueError):
-            feat_vec.append(0.0)
+            v = 0.0
+
+        if f in load_features:
+            v = v * cumulative_fraction
+        elif f == "acwr" and acwr_partial is not None:
+            try:
+                v = float(acwr_partial)
+            except (TypeError, ValueError):
+                pass
+
+        feat_vec.append(v)
 
     X = models["scaler"].transform([feat_vec])
-    injury_prob = models["injury_clf"].predict_proba(X)[0][1]  # P(injured)
+    injury_prob = models["injury_clf"].predict_proba(X)[0][1]
     load_pred = models["load_clf"].predict(X)[0]
     load_label = models["load_classes"][int(load_pred)]
     return injury_prob, load_label
@@ -465,7 +507,7 @@ def build_comment(act_date, ml_daily, models, act=None, cumulative_fraction=1.0)
     # Injury prediction
     if models:
         try:
-            injury_prob, load_pred = _predict_injury(row, models, act_date)
+            injury_prob, load_pred = _predict_injury(row, models, act_date, cumulative_fraction)
             risk_label = "High" if injury_prob > 0.5 else "Moderate" if injury_prob > 0.25 else "Low"
             lines.append(f"Injury Risk: {risk_label} ({injury_prob*100:.0f}%)  |  Load: {load_pred}")
         except Exception:
