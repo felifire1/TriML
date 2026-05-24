@@ -342,11 +342,67 @@ def _fmt(val, decimals=0, suffix=""):
         return "—"
 
 
-LOAD_EMOJI = {"Overreaching": "🔴", "Balanced": "🟢", "Undertrained": "🟡"}
+def _activity_effort(act):
+    """Effort proxy for a Strava activity (used to weight cumulative Grit Score)."""
+    se = act.get("suffer_score")
+    if se:
+        return float(se)
+    # fallback: duration * normalized HR
+    dur = act.get("moving_time") or act.get("elapsed_time") or 0
+    avg_hr = act.get("average_heartrate") or 140
+    return (dur / 60) * (avg_hr / 150)
+
+
+def compute_effort_fractions(activities):
+    """
+    For each date with multiple activities, compute the cumulative effort
+    fraction at each activity (sorted by start time).
+    Returns {activity_id: cumulative_fraction (0-1)}
+    """
+    from collections import defaultdict
+    by_date = defaultdict(list)
+    for act in activities:
+        ts = act.get("start_date_local", "")
+        d = ts[:10] if ts else None
+        if d:
+            by_date[d].append(act)
+
+    fractions = {}
+    for d, acts in by_date.items():
+        acts_sorted = sorted(acts, key=lambda a: a.get("start_date_local", ""))
+        efforts = [_activity_effort(a) for a in acts_sorted]
+        total = sum(efforts) or 1
+        cumulative = 0
+        for act, effort in zip(acts_sorted, efforts):
+            cumulative += effort
+            fractions[act["id"]] = cumulative / total
+    return fractions
+
+
+def _partial_grit(grit_end, acwr, cumulative_fraction):
+    """
+    Scale the load-sensitive component of Grit Score by how much of the
+    day's training load has been done.
+
+    The ACWR sub-score carries 15% of the total Grit Score weight.
+    At the start of the day (no workouts done) that component is 0.
+    By end of day it reaches its full value.
+    """
+    if grit_end is None:
+        return None
+    try:
+        acwr_val = float(acwr) if acwr is not None else 1.0
+        acwr_sub = min(abs(acwr_val - 1.0), 1.0)
+        load_contribution_eod = 100 * 0.15 * acwr_sub
+        load_contribution_now = load_contribution_eod * cumulative_fraction
+        grit_now = float(grit_end) - load_contribution_eod + load_contribution_now
+        return max(0.0, min(100.0, grit_now))
+    except (TypeError, ValueError):
+        return grit_end
 
 
 def _activity_line(act):
-    """Build a workout-specific line from the Strava activity object."""
+    """Build a workout-specific stats line from the Strava activity object."""
     sport = (act.get("sport_type") or act.get("type") or "").lower()
     parts = []
 
@@ -358,14 +414,12 @@ def _activity_line(act):
     w_avg_watts = act.get("weighted_average_watts")
     elevation = act.get("total_elevation_gain")
 
-    # Distance
     if dist_m:
         if "swim" in sport:
             parts.append(f"{dist_m:.0f}m")
         elif dist_m >= 1000:
             parts.append(f"{dist_m/1000:.1f}km")
 
-    # Pace (run) or Power (bike)
     if duration_s and dist_m and dist_m > 0:
         if any(x in sport for x in ["run", "walk", "hike"]):
             pace_sec_km = duration_s / (dist_m / 1000)
@@ -378,58 +432,56 @@ def _activity_line(act):
             elif avg_watts:
                 parts.append(f"{avg_watts:.0f}w avg")
 
-    # HR
     if avg_hr:
         parts.append(f"{avg_hr:.0f}bpm avg")
     if max_hr:
         parts.append(f"{max_hr:.0f} max")
-
-    # Elevation for rides/runs
     if elevation and elevation > 10:
         parts.append(f"+{elevation:.0f}m")
 
-    return "  ·  ".join(parts) if parts else None
+    return "  |  ".join(parts) if parts else None
 
 
-def build_comment(act_date, ml_daily, models, act=None):
+def build_comment(act_date, ml_daily, models, act=None, cumulative_fraction=1.0):
     row = ml_daily.get(act_date)
     if not row:
         return None
 
-    grit = row.get("grit_score")
+    grit_eod = row.get("grit_score")
     acwr = row.get("acwr")
     hrv_z = row.get("hrv_zscore")
     load_class = row.get("load_class", "Balanced")
 
-    lines = ["📊 TriML"]
+    # Grit Score adjusted for how far into the day this activity is
+    grit = _partial_grit(grit_eod, acwr, cumulative_fraction)
 
-    # Activity-specific line (makes each workout unique)
+    lines = ["GritML"]
+
     if act:
         act_line = _activity_line(act)
         if act_line:
             lines.append(act_line)
 
-    # Injury prediction (if models loaded)
+    # Injury prediction
     if models:
         try:
             injury_prob, load_pred = _predict_injury(row, models, act_date)
-            emoji = "🔴" if injury_prob > 0.5 else "🟡" if injury_prob > 0.25 else "🟢"
-            lines.append(f"Injury Risk: {injury_prob*100:.0f}% {emoji}  ·  Load: {load_pred} {LOAD_EMOJI.get(load_pred, '')}")
+            risk_label = "High" if injury_prob > 0.5 else "Moderate" if injury_prob > 0.25 else "Low"
+            lines.append(f"Injury Risk: {risk_label} ({injury_prob*100:.0f}%)  |  Load: {load_pred}")
         except Exception:
             pass
 
     # Grit Score
     if grit is not None:
-        load_emoji = LOAD_EMOJI.get(load_class, "")
-        lines.append(f"Grit Score: {_fmt(grit)}/100  ·  {load_class} {load_emoji}")
+        lines.append(f"Grit Score: {_fmt(grit)}/100  |  {load_class}")
 
-    # ACWR + HRV trend
+    # ACWR + HRV
     details = []
     if acwr is not None:
         details.append(f"ACWR: {_fmt(acwr, 2)}")
     if hrv_z is not None:
         sign = "+" if float(hrv_z) >= 0 else ""
-        details.append(f"HRV: {sign}{_fmt(hrv_z, 1)}σ")
+        details.append(f"HRV: {sign}{_fmt(hrv_z, 1)}sigma")
     if details:
         lines.append("  ".join(details))
 
@@ -475,6 +527,10 @@ def main():
 
     activities = fetch_activities(access_token, args.start, args.end)
 
+    # pre-compute cumulative effort fractions so same-day activities
+    # get progressively higher Grit Scores
+    effort_fractions = compute_effort_fractions(activities)
+
     posted = 0
     skipped = 0
 
@@ -488,7 +544,9 @@ def main():
         if not act_date or not act_id:
             continue
 
-        comment = build_comment(act_date, ml_daily, models, act=act)
+        cumulative_fraction = effort_fractions.get(act_id, 1.0)
+        comment = build_comment(act_date, ml_daily, models, act=act,
+                                cumulative_fraction=cumulative_fraction)
 
         if not comment:
             skipped += 1
